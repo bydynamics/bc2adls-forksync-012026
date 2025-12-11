@@ -1,6 +1,6 @@
 #if not CLEAN27
 // Licensed under the MIT License. See LICENSE in the project root for license information.
-codeunit 82581 "ADLSE Method Imp. Undefined" implements "ADLSE Session Method Interface"
+codeunit 80032 "ADLSE Method Imp. Undefined" implements "ADLSE Session Method Interface"
 {
     ObsoleteState = Pending;
     ObsoleteReason = 'This field will be removed in a future release because readuncommitted will be the default behavior because of performance.';

@@ -20,7 +20,6 @@ table 82567 "ADLSE Enum Translation"
         {
             DataClassification = SystemMetadata;
             Caption = 'Compliant Table Name';
-            ToolTip = 'Specifies the Compliant table Name of the table that is compliant with Data Lake standards.';
         }
         field(3; "Field Id"; Integer)
         {
@@ -32,7 +31,6 @@ table 82567 "ADLSE Enum Translation"
         {
             DataClassification = SystemMetadata;
             Caption = 'Compliant Object Name';
-            ToolTip = 'Specifies the compliant field name of the field that is compliant with Data Lake standards.';
         }
     }
 

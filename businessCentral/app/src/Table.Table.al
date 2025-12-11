@@ -31,7 +31,6 @@ table 82561 "ADLSE Table"
         {
             Editable = false;
             Caption = 'Enabled';
-            ToolTip = 'Specifies the state of the table. Set this checkmark to export this table, otherwise not.';
 
             trigger OnValidate()
             var
@@ -60,7 +59,6 @@ table 82561 "ADLSE Table"
         {
             TableRelation = "ADLSE Export Category Table";
             DataClassification = CustomerContent;
-            ToolTip = 'Specifies the Export Category which can be linked to tables which are part of the export to Azure Datalake. The Category can be used to schedule the export.';
         }
         field(15; ExportFileNumber; Integer)
         {
@@ -70,7 +68,6 @@ table 82561 "ADLSE Table"
         field(17; "Initial Load Start Date"; Date)
         {
             Caption = 'Initial Load Start Date';
-            ToolTip = 'Specifies the starting date for the initial data load. Only records with SystemModifiedAt >= this date will be exported on the first export. Leave blank to export all historical data.';
         }
         field(16; "Process Type"; Enum "ADLSE Process Type")
         {
@@ -301,7 +298,11 @@ table 82561 "ADLSE Table"
             repeat
                 if not ADLSESetup.CanFieldBeExported(ADLSEField."Table ID", ADLSEField."Field ID") then begin
                     ADLSEField.CalcFields(FieldCaption);
-                    FieldList.Add(ADLSEField.FieldCaption <> '' ? ADLSEField.FieldCaption : StrSubstNo(RemovedFieldNameLbl, ADLSEField."Field ID"));
+                    //FieldList.Add(ADLSEField.FieldCaption <> '' ? ADLSEField.FieldCaption : StrSubstNo(RemovedFieldNameLbl, ADLSEField."Field ID"));
+                    if ADLSEField.FieldCaption <> '' then
+                        FieldList.Add(ADLSEField.FieldCaption)
+                    else
+                        FieldList.Add(StrSubstNo(RemovedFieldNameLbl, ADLSEField."Field ID"));                    
                 end;
             until ADLSEField.Next() = 0;
 

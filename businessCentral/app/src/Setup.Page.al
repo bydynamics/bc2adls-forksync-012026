@@ -9,7 +9,6 @@ page 82560 "ADLSE Setup"
     InsertAllowed = false;
     DeleteAllowed = false;
     Caption = 'Export to Azure Data Lake Storage';
-
     layout
     {
         area(Content)
@@ -22,8 +21,6 @@ page 82560 "ADLSE Setup"
                     Caption = 'Account';
                     field(StorageType; Rec."Storage Type")
                     {
-                        Tooltip = 'Specifies the type of storage type to use.';
-
                         trigger OnValidate()
                         begin
                             CurrPage.Update(true);
@@ -32,7 +29,7 @@ page 82560 "ADLSE Setup"
                     field("Tenant ID"; StorageTenantID)
                     {
                         Caption = 'Tenant ID';
-                        Tooltip = 'Specifies the tenant ID which holds the app registration as well as the storage account. Note that they have to be on the same tenant.';
+                        ToolTip = 'Specifies the tenant ID which holds the app registration as well as the storage account. Note that they have to be on the same tenant.';
 
                         trigger OnValidate()
                         begin
@@ -45,14 +42,8 @@ page 82560 "ADLSE Setup"
                 {
                     Caption = 'Azure Data Lake';
                     Editable = AzureDataLake;
-                    field(Container; Rec.Container)
-                    {
-                        Tooltip = 'Specifies the name of the container where the data is going to be uploaded. Please refer to constraints on container names at https://docs.microsoft.com/en-us/rest/api/storageservices/naming-and-referencing-containers--blobs--and-metadata.';
-                    }
-                    field(AccountName; Rec."Account Name")
-                    {
-                        Tooltip = 'Specifies the name of the storage account.';
-                    }
+                    field(Container; Rec.Container) { }
+                    field(AccountName; Rec."Account Name") { }
                 }
                 group(MSFabric)
                 {
@@ -60,11 +51,15 @@ page 82560 "ADLSE Setup"
                     Editable = not AzureDataLake;
                     field(Workspace; Rec.Workspace)
                     {
-                        Tooltip = 'Specifies the name of the Workspace where the data is going to be uploaded. This can be a name or a GUID.';
+                        Editable = not FabricOpenMirroring;
                     }
                     field(Lakehouse; Rec.Lakehouse)
                     {
-                        Tooltip = 'Specifies the name of the Lakehouse where the data is going to be uploaded. This can be a name or a GUID.';
+                        Editable = not FabricOpenMirroring;
+                    }
+                    field(LandingZone; Rec.LandingZone)
+                    {
+                        Editable = FabricOpenMirroring;
                     }
                 }
                 group(Access)
@@ -74,7 +69,7 @@ page 82560 "ADLSE Setup"
                     {
                         Caption = 'Client ID';
                         ExtendedDatatype = Masked;
-                        Tooltip = 'Specifies the application client ID for the Azure App Registration that accesses the storage account.';
+                        ToolTip = 'Specifies the application client ID for the Azure App Registration that accesses the storage account.';
 
                         trigger OnValidate()
                         begin
@@ -85,7 +80,7 @@ page 82560 "ADLSE Setup"
                     {
                         Caption = 'Client secret';
                         ExtendedDatatype = Masked;
-                        Tooltip = 'Specifies the client secret for the Azure App Registration that accesses the storage account.';
+                        ToolTip = 'Specifies the client secret for the Azure App Registration that accesses the storage account.';
 
                         trigger OnValidate()
                         begin
@@ -98,28 +93,28 @@ page 82560 "ADLSE Setup"
                     Caption = 'Execution';
                     field(MaxPayloadSize; Rec.MaxPayloadSizeMiB)
                     {
-                        Editable = not AzureDataLake;
-                        Tooltip = 'Specifies the maximum size of the upload for each block of data in MiBs. A large value will reduce the number of iterations to upload the data but may interfear with the performance of other processes running on this environment.';
+                        Editable = AzureDataLake or FabricOpenMirroring;
                     }
 
                     field("CDM data format"; Rec.DataFormat)
                     {
-                        ToolTip = 'Specifies the format in which to store the exported data in the ''data'' CDM folder. The Parquet format is recommended for storing the data with the best fidelity.';
+                        Editable = AzureDataLake;
                     }
 
                     field("Skip Timestamp Sorting On Recs"; Rec."Skip Timestamp Sorting On Recs")
                     {
                         Enabled = not ExportInProgress;
-                        ToolTip = 'Specifies that the records are not sorted as per their row version before exporting them to the lake. Enabling this may interfear with how incremental data is pushed to the lake in subsequent export runs- please refer to the documentation.';
-                    }
 
-                    field("Emit telemetry"; Rec."Emit telemetry")
-                    {
-                        Tooltip = 'Specifies if operational telemetry will be emitted to this extension publisher''s telemetry pipeline. You will have to configure a telemetry account for this extension first.';
                     }
+                    field("Delayed Export"; Rec."Delayed Export")
+                    {
+                        Enabled = not ExportInProgress;
+
+                    }
+                    field("Emit telemetry"; Rec."Emit telemetry") { }
                     field("Translations"; Rec.Translations)
                     {
-                        ToolTip = 'Specifies the translations for the enums used in the selected tables.';
+
 
                         trigger OnAssistEdit()
                         var
@@ -139,26 +134,28 @@ page 82560 "ADLSE Setup"
                                             Rec.Translations += Language.Code + ';';
                                     until Language.Next() = 0;
                                 //Remove last semicolon
-                                Rec.Translations := CopyStr(Rec.Translations, 1, StrLen(Rec.Translations) - 1);
+                                Rec.Translations := CopyStr(CopyStr(Rec.Translations, 1, StrLen(Rec.Translations) - 1), 1, 250);
                                 CurrPage.Update();
                             end;
                         end;
                     }
-                    field("Export Enum as Integer"; Rec."Export Enum as Integer")
+                    field("Export Enum as Integer"; Rec."Export Enum as Integer") { }
+                    field("Use Field Captions"; Rec."Use Field Captions")
                     {
-                        ToolTip = 'Specifies if the enums will be exported as integers instead of strings. This is useful if you want to use the enums in Power BI.';
+                    }
+                    field("Use Table Captions"; Rec."Use Table Captions")
+                    {
+                    }
+                    field("Use IDs for Duplicates Only"; Rec."Use IDs for Duplicates Only")
+                    {
                     }
                     field("Delete Table"; Rec."Delete Table")
                     {
-                        ToolTip = 'Specifies if the table will be deleted if a reset of the table is done.';
+                        Editable = not FabricOpenMirroring;
                     }
-                    field("Delivered DateTime"; Rec."Delivered DateTime")
-                    {
-                        ToolTip = 'Specifies if the column DeliveredDateTime will be added to the CSV export file.';
-                    }
+                    field("Delivered DateTime"; Rec."Delivered DateTime") { }
                     field("Export Company Database Tables"; Rec."Export Company Database Tables")
                     {
-                        ToolTip = 'Specifies the company for the export of the database tables.';
                         Lookup = true;
                     }
                 }
@@ -178,7 +175,7 @@ page 82560 "ADLSE Setup"
             {
                 ApplicationArea = All;
                 Caption = 'Export';
-                Tooltip = 'Starts the export process by spawning different sessions for each table. The action is disabled in case there are export processes currently running, also in other companies.';
+                ToolTip = 'Starts the export process by spawning different sessions for each table. The action is disabled in case there are export processes currently running, also in other companies.';
                 Image = Start;
                 Enabled = not ExportInProgress;
 
@@ -195,7 +192,7 @@ page 82560 "ADLSE Setup"
             {
                 ApplicationArea = All;
                 Caption = 'Stop export';
-                Tooltip = 'Tries to stop all sessions that are exporting data, including those that are running in other companies.';
+                ToolTip = 'Tries to stop all sessions that are exporting data, including those that are running in other companies.';
                 Image = Stop;
 
                 trigger OnAction()
@@ -210,7 +207,7 @@ page 82560 "ADLSE Setup"
             {
                 ApplicationArea = All;
                 Caption = 'Schema export';
-                Tooltip = 'This will export the schema of the tables selected in the setup to the lake. This is a one-time operation and should be done before the first export of data.';
+                ToolTip = 'This will export the schema of the tables selected in the setup to the lake. This is a one-time operation and should be done before the first export of data.';
                 Image = Start;
 
                 trigger OnAction()
@@ -225,7 +222,7 @@ page 82560 "ADLSE Setup"
             {
                 ApplicationArea = All;
                 Caption = 'Clear schema export date';
-                Tooltip = 'This will clear the schema exported on field. If this is cleared you can change the schema and export it again.';
+                ToolTip = 'This will clear the schema exported on field. If this is cleared you can change the schema and export it again.';
                 Image = ClearLog;
 
                 trigger OnAction()
@@ -241,7 +238,7 @@ page 82560 "ADLSE Setup"
             {
                 ApplicationArea = All;
                 Caption = 'Schedule export';
-                Tooltip = 'Schedules the export process as a job queue entry.';
+                ToolTip = 'Schedules the export process as a job queue entry.';
                 Image = Timesheet;
 
                 trigger OnAction()
@@ -256,7 +253,7 @@ page 82560 "ADLSE Setup"
             {
                 ApplicationArea = All;
                 Caption = 'Clear tracked deleted records';
-                Tooltip = 'Removes the entries in the deleted record list that have already been exported. This should be done periodically to free up storage space. The codeunit ADLSE Clear Tracked Deletions may be invoked using a job queue entry for the same end.';
+                ToolTip = 'Removes the entries in the deleted record list that have already been exported. The codeunit ADLSE Clear Tracked Deletions may be invoked using a job queue entry for the same end.';
                 Image = ClearLog;
                 Enabled = TrackedDeletedRecordsExist;
 
@@ -271,7 +268,7 @@ page 82560 "ADLSE Setup"
             {
                 ApplicationArea = All;
                 Caption = 'Clear execution log';
-                Tooltip = 'Removes the history of the export executions. This should be done periodically to free up storage space.';
+                ToolTip = 'Removes the history of the export executions. This should be done periodically to free up storage space.';
                 Image = History;
                 Enabled = OldLogsExist;
 
@@ -288,7 +285,7 @@ page 82560 "ADLSE Setup"
             {
                 ApplicationArea = All;
                 Caption = 'Fix incorrect data';
-                Tooltip = 'Fixes incorrect tables and fields in the setup. This should be done if you have deleted some tables and fields and you cannot disable them.';
+                ToolTip = 'Fixes incorrect tables and fields in the setup. This should be done if you have deleted some tables and fields and you cannot disable them.';
                 Image = Error;
 
                 trigger OnAction()
@@ -305,9 +302,39 @@ page 82560 "ADLSE Setup"
             {
                 ApplicationArea = All;
                 Caption = 'Enum translations';
-                Tooltip = 'Show the translations for the enums used in the selected tables.';
+                ToolTip = 'Show the translations for the enums used in the selected tables.';
                 Image = Translations;
                 RunObject = page "ADLSE Enum Translations";
+            }
+            action(DeletedTablesNotToSync)
+            {
+                ApplicationArea = All;
+                Caption = 'Deleted tables not to sync';
+                ToolTip = 'Shows all the tables that are specified not to be tracked for deletes.';
+                Image = Delete;
+                RunObject = page "Deleted Tables Not To Sync";
+            }
+            action("Job Queue")
+            {
+                Caption = 'Job Queue';
+                ApplicationArea = All;
+                ToolTip = 'Specifies the scheduled Job Queues for the export to Datalake.';
+                Image = BulletList;
+                trigger OnAction()
+                var
+                    JobQueueEntry: Record "Job Queue Entry";
+                begin
+                    JobQueueEntry.SetFilter("Object ID to Run", '%1|%2', Codeunit::"ADLSE Execution", Report::"ADLSE Schedule Task Assignment");
+                    Page.Run(Page::"Job Queue Entries", JobQueueEntry);
+                end;
+            }
+            action("Export Category")
+            {
+                Caption = 'Export Category';
+                ApplicationArea = All;
+                ToolTip = 'Specifies the Export Categories available for scheduling the export to Datalake.';
+                Image = Export;
+                RunObject = page "ADLSE Export Categories";
             }
         }
         area(Promoted)
@@ -332,7 +359,7 @@ page 82560 "ADLSE Setup"
     }
 
     var
-        AzureDataLake: Boolean;
+        FabricOpenMirroring, AzureDataLake : Boolean;
         ClientSecretLbl: Label 'Secret not shown';
         ClientIdLbl: Label 'ID not shown';
 
@@ -358,6 +385,7 @@ page 82560 "ADLSE Setup"
         OldLogsExist := ADLSERun.OldRunsExist();
         UpdateNotificationIfAnyTableExportFailed();
         AzureDataLake := Rec."Storage Type" = Rec."Storage Type"::"Azure Data Lake";
+        FabricOpenMirroring := Rec."Storage Type" = Rec."Storage Type"::"Open Mirroring";
     end;
 
     var
@@ -374,12 +402,13 @@ page 82560 "ADLSE Setup"
         FailureNotificationID: Guid;
         ExportFailureNotificationMsg: Label 'Data from one or more tables failed to export on the last run. Please check the tables below to see the error(s).';
 
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Table", 'r')]
     local procedure UpdateNotificationIfAnyTableExportFailed()
     var
         ADLSETable: Record "ADLSE Table";
         ADLSERun: Record "ADLSE Run";
         FailureNotification: Notification;
-        Status: enum "ADLSE Run State";
+        Status: Enum "ADLSE Run State";
         LastStarted: DateTime;
         ErrorIfAny: Text[2048];
     begin

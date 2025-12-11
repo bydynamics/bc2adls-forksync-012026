@@ -24,6 +24,7 @@ codeunit 82570 "ADLSE Session Manager"
         StartExport(TableID, true, false, EmitTelemetry);
     end;
 
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Table", 'r')]
     local procedure StartExport(TableID: Integer; ExportWasPending: Boolean; ForceExport: Boolean; EmitTelemetry: Boolean) Started: Boolean
     var
         ADLSETable: Record "ADLSE Table";
@@ -42,7 +43,10 @@ codeunit 82570 "ADLSE Session Manager"
                     if (ADLSESetup."Export Company Database Tables" <> CompanyName()) then
                         exit;
 
-            Started := Session.StartSession(NewSessionID, Codeunit::"ADLSE Execute", CompanyName(), ADLSETable);
+#if not CLEAN27
+            Sleep(500);  // to prevent throttling
+#endif
+            Started := Session.StartSession(NewSessionID, Codeunit::"ADLSE Wrapper Execute", CompanyName(), ADLSETable);
             CustomDimensions.Add('Entity', ADLSEUtil.GetTableCaption(TableID));
             CustomDimensions.Add('ExportWasPending', Format(ExportWasPending));
             if Started then begin
@@ -155,8 +159,10 @@ codeunit 82570 "ADLSE Session Manager"
     var
         Result: Text;
     begin
+#pragma warning disable LC0043
         IsolatedStorage.Get(PendingTablesKeyTxt, DataScope::Company, Result);
         exit(DeConcatenate(Result));
+#pragma warning restore LC0043
     end;
 
     local procedure Concatenate(Values: List of [Integer]) Result: Text
@@ -184,7 +190,9 @@ codeunit 82570 "ADLSE Session Manager"
 
     internal procedure SavePendingTables(Value: Text)
     begin
+#pragma warning disable LC0043
         if IsolatedStorage.Set(PendingTablesKeyTxt, Value, DataScope::Company) then
-            Commit(); // changing isolated storage triggers a write transaction            
+            Commit(); // changing isolated storage triggers a write transaction      
+#pragma warning restore LC0043      
     end;
 }

@@ -1,11 +1,11 @@
 // Create an API page for table and field
 
-page 82567 "ADLSE Field API"
+page 97002 "ADLSE Field API v12"
 {
     PageType = API;
     APIPublisher = 'bc2adlsTeamMicrosoft';
     APIGroup = 'bc2adls';
-    APIVersion = 'v1.0', 'v1.1';
+    APIVersion = 'v1.2';
     EntityName = 'adlseField';
     EntitySetName = 'adlseFields';
     SourceTable = "ADLSE Field";
@@ -24,11 +24,17 @@ page 82567 "ADLSE Field API"
                 field(tableId; Rec."Table ID") { }
                 field(fieldId; Rec."Field ID") { }
                 field(enabled; Rec.Enabled) { }
-                field(systemId; Rec.SystemId)
+                field(id; Rec.SystemId)
                 {
                     Editable = false;
                 }
+#pragma warning disable LC0016
                 field(systemRowVersion; Rec.SystemRowVersion)
+                {
+                    Editable = false;
+                }
+#pragma warning restore
+                field(lastModifiedDateTime; Rec.SystemModifiedAt)
                 {
                     Editable = false;
                 }
@@ -68,7 +74,7 @@ page 82567 "ADLSE Field API"
     local procedure SetActionResponse(var ActionContext: WebServiceActionContext; AdlsId: Guid)
     var
     begin
-        SetActionResponse(ActionContext, Page::"ADLSE Field API", AdlsId);
+        SetActionResponse(ActionContext, Page::"ADLSE Field API v12", AdlsId);
     end;
 
     local procedure SetActionResponse(var ActionContext: WebServiceActionContext; PageId: Integer; DocumentId: Guid)

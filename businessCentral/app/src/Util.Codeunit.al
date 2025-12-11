@@ -5,17 +5,18 @@ codeunit 82564 "ADLSE Util"
     Access = Internal;
 
     var
-        AlphabetsLowerTxt: Label 'abcdefghijklmnopqrstuvwxyz';
-        AlphabetsUpperTxt: Label 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-        NumeralsTxt: Label '1234567890';
+        AlphabetsLowerTxt: Label 'abcdefghijklmnopqrstuvwxyz', Locked = true;
+        AlphabetsUpperTxt: Label 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', Locked = true;
+        NumeralsTxt: Label '1234567890', Locked = true;
+        SpecialCharsTxt: Label '%', Locked = true;
         FieldTypeNotSupportedErr: Label 'The field %1 of type %2 is not supported.', Comment = '%1 = field name, %2 = field type';
-        ConcatNameIdTok: Label '%1-%2', Comment = '%1: Name, %2: ID';
-        DateTimeExpandedFormatTok: Label '%1, %2 %3 %4 %5:%6:%7 GMT', Comment = '%1: weekday, %2: day, %3: month, %4: year, %5: hour, %6: minute, %7: second';
-        QuotedTextTok: Label '"%1"', Comment = '%1: text to be double- quoted';
-        CommaPrefixedTok: Label ',%1', Comment = '%1: text to be prefixed';
-        CommaSuffixedTok: Label '%1, ', Comment = '%1: text to be suffixed';
-        WholeSecondsTok: Label ':%1Z', Comment = '%1: seconds';
-        FractionSecondsTok: Label ':%1.%2Z', Comment = '%1: seconds, %2: milliseconds';
+        ConcatNameIdTok: Label '%1-%2', Comment = '%1: Name, %2: ID', Locked = true;
+        DateTimeExpandedFormatTok: Label '%1, %2 %3 %4 %5:%6:%7 GMT', Comment = '%1: weekday, %2: day, %3: month, %4: year, %5: hour, %6: minute, %7: second', Locked = true;
+        QuotedTextTok: Label '"%1"', Comment = '%1: text to be double- quoted', Locked = true;
+        CommaPrefixedTok: Label ',%1', Comment = '%1: text to be prefixed', Locked = true;
+        CommaSuffixedTok: Label '%1, ', Comment = '%1: text to be suffixed', Locked = true;
+        WholeSecondsTok: Label ':%1Z', Comment = '%1: seconds', Locked = true;
+        FractionSecondsTok: Label ':%1.%2Z', Comment = '%1: seconds, %2: milliseconds', Locked = true;
 
     procedure ToText(GuidValue: Guid): Text
     begin
@@ -28,6 +29,7 @@ codeunit 82564 "ADLSE Util"
     begin
         foreach Item in List do
             Result += StrSubstNo(CommaSuffixedTok, Item);
+        Result := Result.TrimEnd(', ');
     end;
 
     procedure GetCurrentDateTimeInGMTFormat(): Text
@@ -133,48 +135,106 @@ codeunit 82564 "ADLSE Util"
 
     procedure GetTableCaption(TableID: Integer): Text
     var
-        RecordRef: RecordRef;
+        AllObjWithCaption: Record AllObjWithCaption;
     begin
-        RecordRef.Open(TableID);
-        exit(RecordRef.Caption());
+        if AllObjWithCaption.Get(AllObjWithCaption."Object Type"::Table, TableID) then
+            exit(AllObjWithCaption."Object Caption");
     end;
 
     procedure GetDataLakeCompliantTableName(TableID: Integer) TableName: Text
     var
+        ADLSESetup: Record "ADLSE Setup";
+        AllObjWithCaption: Record AllObjWithCaption;
         OrigTableName: Text;
     begin
-        OrigTableName := GetTableName(TableID);
-        TableName := GetDataLakeCompliantName(OrigTableName);
-        exit(StrSubstNo(ConcatNameIdTok, TableName, TableID));
+        ADLSESetup.GetSingleton();
+        if ADLSESetup."Use Table Captions" then
+            OrigTableName := GetTableCaption(TableID)
+        else
+            OrigTableName := GetTableName(TableID);
+        if ADLSESetup."Use IDs for Duplicates Only" then begin
+            AllObjWithCaption.SetRange("Object Type", AllObjWithCaption."Object Type"::Table);
+            AllObjWithCaption.SetFilter("Object ID", '<>%1', TableID);
+            if ADLSESetup."Use Table Captions" then
+                AllObjWithCaption.SetRange("Object Caption", OrigTableName)
+            else
+                AllObjWithCaption.SetRange("Object Name", OrigTableName);
+            if AllObjWithCaption.IsEmpty() then // there is not a duplicate table caption
+                exit(GetDataLakeCompliantName(OrigTableName))
+            else
+                exit(StrSubstNo(ConcatNameIdTok, GetDataLakeCompliantName(OrigTableName), TableID));
+        end else
+            exit(StrSubstNo(ConcatNameIdTok, GetDataLakeCompliantName(OrigTableName), TableID));
     end;
 
-    procedure GetDataLakeCompliantFieldName(FieldName: Text; FieldID: Integer): Text
+    procedure GetDataLakeCompliantFieldName(TableID: Integer; FieldID: Integer): Text
+    var
+        RecRef: RecordRef;
+        FieldRef: FieldRef;
     begin
-        exit(StrSubstNo(ConcatNameIdTok, GetDataLakeCompliantName(FieldName), FieldID));
+        RecRef.Open(TableID);
+        FieldRef := RecRef.Field(FieldID);
+        exit(GetDataLakeCompliantFieldName(FieldRef));
+    end;
+
+    procedure GetDataLakeCompliantFieldName(FieldRef: FieldRef): Text
+    var
+        ADLSESetup: Record "ADLSE Setup";
+        TableFields: Record Field;
+        RecRef: RecordRef;
+        NameToUse: Text;
+    begin
+        ADLSESetup.GetSingleton();
+        if ADLSESetup."Use Field Captions" then
+            NameToUse := FieldRef.Caption()
+        else
+            NameToUse := FieldRef.Name();
+        if ADLSESetup."Use IDs for Duplicates Only" then begin
+            RecRef := FieldRef.Record();
+            TableFields.SetRange(TableNo, RecRef.Number);
+            if ADLSESetup."Use Field Captions" then
+                TableFields.SetRange("Field Caption", NameToUse)
+            else
+                exit(GetDataLakeCompliantName(NameToUse));
+
+            TableFields.SetFilter("No.", '<>%1', FieldRef.Number);
+            if TableFields.IsEmpty() then // there is not a duplicate field name/caption
+                exit(GetDataLakeCompliantName(NameToUse))
+            else
+                exit(StrSubstNo(ConcatNameIdTok, GetDataLakeCompliantName(NameToUse), FieldRef.Number));
+        end else
+            exit(StrSubstNo(ConcatNameIdTok, GetDataLakeCompliantName(NameToUse), FieldRef.Number));
     end;
 
     procedure GetTableName(TableID: Integer) TableName: Text
     var
-        RecordRef: RecordRef;
+        AllObjWithCaption: Record AllObjWithCaption;
     begin
-        RecordRef.Open(TableID);
-        TableName := RecordRef.Name;
+        if AllObjWithCaption.Get(AllObjWithCaption."Object Type"::Table, TableID) then
+            TableName := AllObjWithCaption."Object Name";
     end;
 
     procedure GetDataLakeCompliantName(Name: Text) Result: Text
     var
+        ADLSESetup: Record "ADLSE Setup";
         ResultBuilder: TextBuilder;
         Index: Integer;
         Letter: Text;
         AddToResult: Boolean;
     begin
+        ADLSESetup.GetSingleton();
         for Index := 1 to StrLen(Name) do begin
             Letter := CopyStr(Name, Index, 1);
             AddToResult := true;
             if StrPos(AlphabetsLowerTxt, Letter) = 0 then
                 if StrPos(AlphabetsUpperTxt, Letter) = 0 then
                     if StrPos(NumeralsTxt, Letter) = 0 then
-                        AddToResult := false;
+                        if ADLSESetup."Use IDs for Duplicates Only" then begin
+                            if StrPos(SpecialCharsTxt, Letter) = 0 then
+                                AddToResult := false;
+                        end
+                        else
+                            AddToResult := false;
             if AddToResult then
                 ResultBuilder.Append(Letter);
         end;
@@ -206,6 +266,7 @@ codeunit 82564 "ADLSE Util"
     var
         ADLSESetup: Record "ADLSE Setup";
         DateTimeValue: DateTime;
+        TimeValue: Time;
     begin
         case FieldRef.Type of
             FieldRef.Type::BigInteger,
@@ -213,9 +274,13 @@ codeunit 82564 "ADLSE Util"
             FieldRef.Type::DateFormula,
             FieldRef.Type::Decimal,
             FieldRef.Type::Duration,
-            FieldRef.Type::Integer,
-            FieldRef.Type::Time:
+            FieldRef.Type::Integer:
                 exit(ConvertNumberToText(FieldRef.Value()));
+            FieldRef.Type::Time:
+                begin
+                    TimeValue := FieldRef.Value();
+                    exit(ConvertTimeToText(TimeValue));
+                end;
             FieldRef.Type::DateTime:
                 begin
                     DateTimeValue := FieldRef.Value();
@@ -274,6 +339,18 @@ codeunit 82564 "ADLSE Util"
         exit(Format(Variant, 0, 9));
     end;
 
+    local procedure ConvertTimeToText(Variant: Variant): Text
+    var
+        ADLSESetup: Record "ADLSE Setup";
+        TimeValue: Time;
+    begin
+        if ADLSESetup.GetStorageType() = ADLSESetup."Storage Type"::"Open Mirroring" then begin
+            TimeValue := Variant;
+            exit(ConvertStringToText(Format(TimeValue, 0, '<Hours24>:<Minutes,2>:<Seconds,2>')))
+        end else
+            exit(ConvertNumberToText(Variant));
+    end;
+
     local procedure ConvertDateTimeToText(Val: DateTime) Result: Text
     var
         SecondsText: Text;
@@ -320,12 +397,15 @@ codeunit 82564 "ADLSE Util"
         FieldsAdded: Integer;
         FieldTextValue: Text;
         Payload: TextBuilder;
+        RowMarkerTok: Label '__rowMarker__', Comment = 'Rowmarker must always be the first column for open mirroring', Locked = true;
     begin
         FieldsAdded := 0;
+        ADLSESetup.GetSingleton();
+
         foreach FieldID in FieldIdList do begin
             FieldRef := RecordRef.Field(FieldID);
 
-            FieldTextValue := GetDataLakeCompliantFieldName(FieldRef.Name, FieldRef.Number);
+            FieldTextValue := GetDataLakeCompliantFieldName(FieldRef);
             if FieldsAdded = 0 then
                 Payload.Append(FieldTextValue)
             else
@@ -334,16 +414,21 @@ codeunit 82564 "ADLSE Util"
         end;
         if IsTablePerCompany(RecordRef.Number) then
             Payload.Append(StrSubstNo(CommaPrefixedTok, ADLSECDMUtil.GetCompanyFieldName()));
-        ADLSESetup.GetSingleton();
+
         if ADLSESetup."Delivered DateTime" then
             Payload.Append(StrSubstNo(CommaPrefixedTok, ADLSECDMUtil.GetDeliveredDateTimeFieldName()));
+
+        if ADLSESetup."Storage Type" = ADLSESetup."Storage Type"::"Open Mirroring" then
+            Payload.Append(StrSubstNo(CommaPrefixedTok, RowMarkerTok));
+
         Payload.AppendLine();
         RecordPayload := Payload.ToText();
     end;
 
-    procedure CreateCsvPayload(RecordRef: RecordRef; FieldIdList: List of [Integer]; AddHeaders: Boolean) RecordPayload: Text
+    procedure CreateCsvPayload(RecordRef: RecordRef; FieldIdList: List of [Integer]; AddHeaders: Boolean; Deletes: Boolean) RecordPayload: Text
     var
         ADLSESetup: Record "ADLSE Setup";
+        ADLSETableLastTimestamp: Record "ADLSE Table Last Timestamp";
         FieldRef: FieldRef;
         CurrDateTime: DateTime;
         FieldID: Integer;
@@ -359,6 +444,7 @@ codeunit 82564 "ADLSE Util"
             CurrDateTime := CurrentDateTime();
 
         FieldsAdded := 0;
+
         foreach FieldID in FieldIdList do begin
             FieldRef := RecordRef.Field(FieldID);
 
@@ -373,6 +459,18 @@ codeunit 82564 "ADLSE Util"
             Payload.Append(StrSubstNo(CommaPrefixedTok, ConvertStringToText(CompanyName())));
         if ADLSESetup."Delivered DateTime" then
             Payload.Append(StrSubstNo(CommaPrefixedTok, ConvertDateTimeToText(CurrDateTime)));
+
+        if ADLSESetup."Storage Type" = ADLSESetup."Storage Type"::"Open Mirroring" then
+            if Deletes then
+                Payload.Append(StrSubstNo(CommaPrefixedTok, '2'))
+            else
+                Payload.Append(StrSubstNo(CommaPrefixedTok, '4'));
+        //https://learn.microsoft.com/en-us/fabric/database/mirrored-database/open-mirroring-landing-zone-format#data-file-and-format-in-the-landing-zone
+        // 0- 	Insert
+        // 1- 	Update
+        // 2- 	Delete
+        // 4-   Upsert
+
         Payload.AppendLine();
 
         RecordPayload := Payload.ToText();
@@ -382,9 +480,8 @@ codeunit 82564 "ADLSE Util"
     var
         TableMetadata: Record "Table Metadata";
     begin
-        TableMetadata.SetRange(ID, TableID);
-        TableMetadata.FindFirst();
-        exit(TableMetadata.DataPerCompany);
+        if TableMetadata.Get(TableID) then
+            exit(TableMetadata.DataPerCompany);
     end;
 
     procedure CreateFakeRecordForDeletedAction(ADLSEDeletedRecord: Record "ADLSE Deleted Record"; var RecordRef: RecordRef)

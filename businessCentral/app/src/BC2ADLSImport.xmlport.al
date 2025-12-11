@@ -1,8 +1,10 @@
-xmlport 82560 "BC2ADLS Import"
+xmlport 62018 "BC2ADLS Import"
 {
     Caption = 'BC2ADLS Import';
     UseRequestPage = false;
     Direction = Import;
+    Permissions = tabledata "ADLSE Field" = rmi,
+                  tabledata "ADLSE Table" = rmid;
 
     schema
     {

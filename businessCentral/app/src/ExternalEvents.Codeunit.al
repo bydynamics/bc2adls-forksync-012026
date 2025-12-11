@@ -105,18 +105,6 @@ codeunit 82574 "ADLSE External Events"
         MyBusinessOnExport(ADLSESetup.SystemId, ADLSESetup."Storage Type", Url, WebClientUrl);
     end;
 
-    [Obsolete('Replaced with the OnExportFinishedv2 External Business Event', '24.0')]
-    internal procedure OnExportFinished(ADLSESetup: Record "ADLSE Setup")
-    var
-        Url: Text[250];
-        WebClientUrl: Text[250];
-        ADLSEFieldApiUrlTok: Label 'bc2adlsTeamMicrosoft/bc2adls/v1.0/companies(%1)/adlseSetup(%2)', Locked = true;
-    begin
-        Url := ADLSEExternalEventsHelper.CreateLink(ADLSEFieldApiUrlTok, ADLSESetup.SystemId);
-        WebClientUrl := CopyStr(GetUrl(ClientType::Web, CompanyName(), ObjectType::Page, Page::"ADLSE Setup", ADLSESetup), 1, MaxStrLen(WebClientUrl));
-        MyBusinessOnExportFinished(ADLSESetup.SystemId, ADLSESetup."Storage Type", Url, WebClientUrl);
-    end;
-
     internal procedure OnExportFinished(ADLSESetup: Record "ADLSE Setup"; ADLSETable: Record "ADLSE Table")
     var
         Url: Text[250];
@@ -125,7 +113,7 @@ codeunit 82574 "ADLSE External Events"
     begin
         Url := ADLSEExternalEventsHelper.CreateLink(ADLSEFieldApiUrlTok, ADLSETable.SystemId);
         WebClientUrl := CopyStr(GetUrl(ClientType::Web, CompanyName(), ObjectType::Page, Page::"ADLSE Setup", ADLSESetup), 1, MaxStrLen(WebClientUrl));
-        MyBusinessOnExportFinishedv2(ADLSETable.SystemId, ADLSESetup."Storage Type", ADLSETable."Table ID", Url, WebClientUrl);
+        MyBusinessOnAllExportIsFinished(ADLSESetup.SystemId, ADLSESetup."Storage Type", Url, WebClientUrl);
     end;
 
     internal procedure OnAllExportIsFinished(ADLSESetup: Record "ADLSE Setup")
@@ -215,17 +203,6 @@ codeunit 82574 "ADLSE External Events"
     begin
     end;
 
-    [Obsolete('Replaced with the OnExportFinishedv2 External Business Event', '24.0')]
-    [ExternalBusinessEvent('OnExportFinished', 'Export is finished for one table', 'When the export is finished for one table', EventCategory::ADLSE)]
-    local procedure MyBusinessOnExportFinished(SystemId: Guid; "Storage Type": Enum "ADLSE Storage Type"; Url: Text[250]; WebClientUrl: Text[250])
-    begin
-    end;
-
-    [ExternalBusinessEvent('OnExportFinishedv2', 'Export is finished for one table v2', 'When the export is finished for one table', EventCategory::ADLSE)]
-    local procedure MyBusinessOnExportFinishedv2(SystemId: Guid; "Storage Type": Enum "ADLSE Storage Type"; TableId: Integer; Url: Text[250]; WebClientUrl: Text[250])
-    begin
-    end;
-
     [ExternalBusinessEvent('OnAllExportIsFinished', 'Export is finished of all tables', 'When the export is finished of all tables', EventCategory::ADLSE)]
     local procedure MyBusinessOnAllExportIsFinished(SystemId: Guid; "Storage Type": Enum "ADLSE Storage Type"; Url: Text[250]; WebClientUrl: Text[250])
     begin
@@ -237,7 +214,7 @@ codeunit 82574 "ADLSE External Events"
     end;
 
     [EventSubscriber(ObjectType::Table, Database::"ADLSE Table", OnAfterResetSelected, '', true, true)]
-    local procedure OnAfterResetSelected(ADLSETable: Record "ADLSE Table");
+    local procedure OnAfterResetSelected(ADLSETable: Record "ADLSE Table")
     begin
         MyBusinessEventOnAfterResetSelected(ADLSETable.SystemId, ADLSETable."Table ID");
     end;

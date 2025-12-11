@@ -16,9 +16,9 @@ codeunit 82563 "ADLSE Http"
         ContentTypeApplicationJsonTok: Label 'application/json', Locked = true;
         ContentTypePlainTextTok: Label 'text/plain; charset=utf-8', Locked = true;
         UnsupportedMethodErr: Label 'Unsupported method: %1', Comment = '%1: http method name';
-        OAuthTok: Label 'https://login.microsoftonline.com/%1/oauth2/token', Comment = '%1: tenant id';
-        BearerTok: Label 'Bearer %1', Comment = '%1: access token';
-        AcquireTokenBodyTok: Label 'resource=%1&scope=%2&client_id=%3&client_secret=%4&grant_type=client_credentials', Comment = '%1: encoded resource url, %2: encoded scope url, %3: client ID, %4: client secret';
+        OAuthTok: Label 'https://login.microsoftonline.com/%1/oauth2/token', Comment = '%1: tenant id', Locked = true;
+        BearerTok: Label 'Bearer %1', Comment = '%1: access token', Locked = true;
+        AcquireTokenBodyTok: Label 'resource=%1&scope=%2&client_id=%3&client_secret=%4&grant_type=client_credentials', Comment = '%1: encoded resource url, %2: encoded scope url, %3: client ID, %4: client secret', Locked = true;
 
     procedure SetMethod(HttpMethodValue: Enum "ADLSE Http Method")
     begin
@@ -168,23 +168,22 @@ codeunit 82563 "ADLSE Http"
         ADLSESetup: Record "ADLSE Setup";
         Headers: HttpHeaders;
     begin
-        if (ADLSESetup.GetStorageType() = ADLSESetup."Storage Type"::"Azure Data Lake") or
-        (ADLSESetup.GetStorageType() = ADLSESetup."Storage Type"::"Microsoft Fabric") and (not ContentTypeJson)
+
+        if (not ContentTypeJson) or (ADLSESetup.GetStorageType() = ADLSESetup."Storage Type"::"Azure Data Lake")
         then
             HttpContent.WriteFrom(Body);
 
         HttpContent.GetHeaders(Headers);
-
         if ContentTypeJson then begin
             Headers.Remove('Content-Type');
             Headers.Add('Content-Type', 'application/json');
             Headers.Remove('Content-Length');
-            if ADLSESetup.GetStorageType() = ADLSESetup."Storage Type"::"Microsoft Fabric" then
+            if ADLSESetup.GetStorageType() <> ADLSESetup."Storage Type"::"Azure Data Lake" then
                 Headers.Add('Content-Length', '0');
         end;
 
-        if (ADLSESetup.GetStorageType() = ADLSESetup."Storage Type"::"Microsoft Fabric") and (not ContentTypeJson) then
-            Headers.Remove('Content-Length');
+        if (ADLSESetup.GetStorageType() <> ADLSESetup."Storage Type"::"Azure Data Lake") and (not ContentTypeJson) then
+            Headers.Remove('Content-Type');
     end;
 
     [NonDebuggable]
@@ -192,6 +191,7 @@ codeunit 82563 "ADLSE Http"
     var
         ADLSEUtil: Codeunit "ADLSE Util";
         Headers: HttpHeaders;
+        //AccessToken: SecretText;
         AccessToken: Text;
         AuthError: Text;
     begin
@@ -201,12 +201,20 @@ codeunit 82563 "ADLSE Http"
         end;
 
         AccessToken := AcquireTokenOAuth2(AuthError);
+        // if AccessToken.IsEmpty() then begin
+        //     Response := AuthError;
+        //     Success := false;
+        //     exit;
+        // end;
+
         if AccessToken = '' then begin
             Response := AuthError;
             Success := false;
             exit;
         end;
+
         Headers := HttpClient.DefaultRequestHeaders();
+        // Headers.Add('Authorization', SecretStrSubstNo(BearerTok, AccessToken));
         Headers.Add('Authorization', StrSubstNo(BearerTok, AccessToken));
         Headers.Add('x-ms-version', AzureStorageServiceVersionTok);
         Headers.Add('x-ms-date', ADLSEUtil.GetCurrentDateTimeInGMTFormat());

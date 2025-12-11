@@ -24,7 +24,7 @@ codeunit 82568 "ADLSE Gen 2 Util"
         CouldNotCreateBlobErr: Label 'Could not create blob %1. %2', Comment = '%1: blob path, %2: error text';
         CouldNotReadDataInBlobErr: Label 'Could not read data on %1. %2', Comment = '%1: blob path, %2: Http respomse';
         CouldNotReadResponseHeaderErr: Label 'Could not read %1 from %2.', Comment = '%1: content header value , %2: blob path';
-        LatestBlockTagTok: Label '<Latest>%1</Latest>', Comment = '%1: block ID';
+        LatestBlockTagTok: Label '<Latest>%1</Latest>', Comment = '%1: block ID', Locked = true;
 
     procedure ContainerExists(ContainerPath: Text; ADLSECredentials: Codeunit "ADLSE Credentials"): Boolean
     var
@@ -89,7 +89,7 @@ codeunit 82568 "ADLSE Gen 2 Util"
         ContentLengthTok: Label 'Content-Length', Locked = true;
     begin
         OnBeforeGetBlobContentLength(BlobPath, ContentLength, IsHandled);
-        If IsHandled then
+        if IsHandled then
             exit;
 
         ADLSEHttp.SetMethod("ADLSE Http Method"::Head);
@@ -130,7 +130,7 @@ codeunit 82568 "ADLSE Gen 2 Util"
         case ADLSESetup.GetStorageType() of
             ADLSESetup."Storage Type"::"Azure Data Lake":
                 ADLSEHttp.SetUrl(BlobPath);
-            ADLSESetup."Storage Type"::"Microsoft Fabric":
+            ADLSESetup."Storage Type"::"Microsoft Fabric", ADLSESetup."Storage Type"::"Open Mirroring":
                 begin
                     BlobPathOrg := BlobPath;
                     ADLSEHttp.SetUrl(BlobPath + '?resource=file');
@@ -151,7 +151,7 @@ codeunit 82568 "ADLSE Gen 2 Util"
             Error(CouldNotCreateBlobErr, BlobPath, Response);
 
         //Upload Json for Microsoft Fabric
-        if (ADLSESetup.GetStorageType() = ADLSESetup."Storage Type"::"Microsoft Fabric") and (IsJson) then
+        if (ADLSESetup.GetStorageType() <> ADLSESetup."Storage Type"::"Azure Data Lake") and (IsJson) then
             AddBlockToDataBlob(BlobPathOrg, Body, 0, ADLSECredentials);
     end;
 
@@ -282,7 +282,7 @@ codeunit 82568 "ADLSE Gen 2 Util"
         ADLSESetup: Record "ADLSE Setup";
         BlobTotalContentSize: BigInteger;
     begin
-        if ADLSESetup.GetStorageType() <> ADLSESetup."Storage Type"::"Microsoft Fabric" then
+        if ADLSESetup.GetStorageType() = ADLSESetup."Storage Type"::"Azure Data Lake" then
             exit(false);
 
         // To prevent a overflow, use a BigInterger to calculate the total value
@@ -290,16 +290,28 @@ codeunit 82568 "ADLSE Gen 2 Util"
         BlobTotalContentSize += PayloadLength;
 
         // Microsoft Fabric has a limit of 2 GB (2147483647) for a blob.
-        if BlobTotalContentSize < 2147483647 then
-            exit(false);
+        if ADLSESetup.GetStorageType() = ADLSESetup."Storage Type"::"Microsoft Fabric" then
+            if BlobTotalContentSize < 2147483647 then
+                exit(false);
+
+        // Microsoft Fabric Open Mirroring cannot append data because it is reading directly.
+        if ADLSESetup.GetStorageType() = ADLSESetup."Storage Type"::"Open Mirroring" then
+            if BlobTotalContentSize < (ADLSESetup.MaxPayloadSizeMiB * 1024 * 1024) then
+                exit(false);
 
         exit(true);
     end;
 
     procedure RemoveDeltasFromDataLake(ADLSEntityName: Text; ADLSECredentials: Codeunit "ADLSE Credentials")
+    begin
+        RemoveDeltasFromDataLake(ADLSEntityName, ADLSECredentials, false);
+    end;
+
+    procedure RemoveDeltasFromDataLake(ADLSEntityName: Text; ADLSECredentials: Codeunit "ADLSE Credentials"; AllCompanies: Boolean)
     var
         ADLSESetup: Record "ADLSE Setup";
         ADLSEHttp: Codeunit "ADLSE Http";
+        IsHandled: Boolean;
         Response: Text;
         Url: Text;
         ADLSEContainerUrlTxt: Label 'https://%1.dfs.core.windows.net/%2', Comment = '%1: Account name, %2: Container Name', Locked = true;
@@ -307,14 +319,51 @@ codeunit 82568 "ADLSE Gen 2 Util"
         // DELETE https://{accountName}.{dnsSuffix}/{filesystem}/{path}
         // https://learn.microsoft.com/en-us/rest/api/storageservices/datalakestoragegen2/path/delete?view=rest-storageservices-datalakestoragegen2-2019-12-12
         ADLSESetup.GetSingleton();
-        Url := StrSubstNo(ADLSEContainerUrlTxt, ADLSESetup."Account Name", ADLSESetup.Container);
-        Url += '/deltas/' + ADLSEntityName + '?recursive=true';
 
-        ADLSEHttp.SetMethod("ADLSE Http Method"::Delete);
-        ADLSEHttp.SetUrl(Url);
-        ADLSEHttp.SetAuthorizationCredentials(ADLSECredentials);
-        ADLSEHttp.InvokeRestApi(Response)
+        OnBeforeRemoveDeltasFromDataLake(ADLSEntityName, ADLSECredentials, AllCompanies, IsHandled);
+        if IsHandled then
+            exit;
+
+
+        if AllCompanies then begin
+            Url := StrSubstNo(ADLSEContainerUrlTxt, ADLSESetup."Account Name", ADLSESetup.Container);
+            Url += '/deltas/' + ADLSEntityName + '?recursive=true';
+
+            ADLSEHttp.SetMethod("ADLSE Http Method"::Delete);
+            ADLSEHttp.SetUrl(Url);
+            ADLSEHttp.SetAuthorizationCredentials(ADLSECredentials);
+            ADLSEHttp.InvokeRestApi(Response)
+        end;
     end;
+
+    procedure DropTableFromOpenMirroring(ADLSEntityName: Text; ADLSECredentials: Codeunit "ADLSE Credentials"; AllCompanies: Boolean)
+    var
+        ADLSESetup: Record "ADLSE Setup";
+        ADLSEHttp: Codeunit "ADLSE Http";
+        IsHandled: Boolean;
+        Response: Text;
+        Url: Text;
+    begin
+        // DELETE https://onelake.dfs.fabric.microsoft.com/{CONTAINER_ID}/{MIRRORED_DATABASE_ID}/Files/LandingZone/{FOLDER_NAME}?recursive=true
+        // https://learn.microsoft.com/en-us/fabric/database/mirrored-database/open-mirroring-landing-zone-format#drop-table
+        ADLSESetup.GetSingleton();
+
+        OnBeforeDropTableFromOpenMirroring(ADLSEntityName, ADLSECredentials, AllCompanies, IsHandled);
+        if IsHandled then
+            exit;
+
+
+        if AllCompanies then begin
+            Url := ADLSESetup.LandingZone;
+            Url += '/' + ADLSEntityName + '?recursive=true';
+
+            ADLSEHttp.SetMethod("ADLSE Http Method"::Delete);
+            ADLSEHttp.SetUrl(Url);
+            ADLSEHttp.SetAuthorizationCredentials(ADLSECredentials);
+            ADLSEHttp.InvokeRestApi(Response)
+        end;
+    end;
+
 
     [IntegrationEvent(false, false)]
     local procedure OnBeforeGetBlobContent(BlobPath: Text; ADLSECredentials: Codeunit "ADLSE Credentials"; var BlobExists: Boolean; var Content: JsonObject; var IsHandled: Boolean)
@@ -338,6 +387,16 @@ codeunit 82568 "ADLSE Gen 2 Util"
 
     [IntegrationEvent(false, false)]
     local procedure OnBeforeCommitAllBlocksOnDataBlob(BlobPath: Text; BlockIDList: List of [Text]; var IsHandled: Boolean)
+    begin
+    end;
+
+    [Integrationevent(false, false)]
+    local procedure OnBeforeRemoveDeltasFromDataLake(ADLSEntityName: Text; ADLSECredentials: Codeunit "ADLSE Credentials"; AllCompanies: Boolean; var IsHandled: Boolean)
+    begin
+    end;
+
+    [Integrationevent(false, false)]
+    local procedure OnBeforeDropTableFromOpenMirroring(ADLSEntityName: Text; ADLSECredentials: Codeunit "ADLSE Credentials"; AllCompanies: Boolean; var IsHandled: Boolean)
     begin
     end;
 }

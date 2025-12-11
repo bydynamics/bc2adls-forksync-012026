@@ -23,17 +23,18 @@ codeunit 82562 "ADLSE Communication"
         DeltaCdmManifestNameTxt: Label 'deltas.manifest.cdm.json', Locked = true;
         DataCdmManifestNameTxt: Label 'data.manifest.cdm.json', Locked = true;
         EntityManifestNameTemplateTxt: Label '%1.cdm.json', Locked = true, Comment = '%1 = Entity name';
-        ContainerUrlTxt: Label 'https://%1.blob.core.windows.net/%2', Comment = '%1: Account name, %2: Container Name';
+        ContainerUrlTxt: Label 'https://%1.blob.core.windows.net/%2', Locked = true, Comment = '%1: Account name, %2: Container Name';
         CorpusJsonPathTxt: Label '/%1', Comment = '%1 = name of the blob', Locked = true;
         CannotAddedMoreBlocksErr: Label 'The number of blocks that can be added to the blob has reached its maximum limit.';
         SingleRecordTooLargeErr: Label 'A single record payload exceeded the max payload size. Please adjust the payload size or reduce the fields to be exported for the record.';
-        DeltasFileCsvTok: Label '/deltas/%1/%2.csv', Comment = '%1: Entity, %2: File identifier guid';
+        DeltasFileCsvTok: Label '/deltas/%1/%2.csv', Comment = '%1: Entity, %2: File identifier guid', Locked = true;
+        FileCsvTok: Label '/%1/%2.csv', Comment = '%1: Entity, %2: File identifier guid', Locked = true;
         ExportOfSchemaNotPerformendTxt: Label 'Please export the schema first before trying to export the data.';
         EntitySchemaChangedErr: Label 'The schema of the table %1 has changed. %2', Comment = '%1 = Entity name, %2 = NotAllowedOnSimultaneousExportTxt';
         CdmSchemaChangedErr: Label 'There may have been a change in the tables to export. %1', Comment = '%1 = NotAllowedOnSimultaneousExportTxt';
         MSFabricUrlTxt: Label 'https://onelake.dfs.fabric.microsoft.com/%1/%2.Lakehouse/Files', Locked = true, Comment = '%1: Workspace name, %2: Lakehouse Name';
         MSFabricUrlGuidTxt: Label 'https://onelake.dfs.fabric.microsoft.com/%1/%2/Files', Locked = true, Comment = '%1: Workspace name, %2: Lakehouse Name';
-        ResetTableExportTxt: Label '/reset/%1.txt', Locked = true, comment = '%1 = Table name';
+        ResetTableExportTxt: Label '/reset/%1.txt', Locked = true, Comment = '%1 = Table name';
 
     procedure SetupBlobStorage()
     var
@@ -64,6 +65,8 @@ codeunit 82562 "ADLSE Communication"
                     exit(StrSubstNo(MSFabricUrlTxt, ADLSESetup.Workspace, ADLSESetup.Lakehouse))
                 else
                     exit(StrSubstNo(MSFabricUrlGuidTxt, ADLSESetup.Workspace, ADLSESetup.Lakehouse));
+            ADLSESetup."Storage Type"::"Open Mirroring":
+                exit(ADLSESetup.LandingZone);
         end;
     end;
 
@@ -131,9 +134,15 @@ codeunit 82562 "ADLSE Communication"
 
     procedure CreateEntityContent()
     var
+        ADLSESetup: Record "ADLSE Setup";
         ADLSECdmUtil: Codeunit "ADLSE CDM Util";
     begin
-        EntityJson := ADLSECdmUtil.CreateEntityContent(TableID, FieldIdList);
+        ADLSESetup.GetSingleton();
+        if ADLSESetup.GetStorageType() = ADLSESetup."Storage Type"::"Open Mirroring" then
+            EntityJson := ADLSECdmUtil.CreateEntityContent(TableID)
+        else
+            EntityJson := ADLSECdmUtil.CreateEntityContent(TableID, FieldIdList);
+
     end;
 
     local procedure JsonsDifferent(Json1: JsonObject; Json2: JsonObject) Result: Boolean
@@ -153,13 +162,23 @@ codeunit 82562 "ADLSE Communication"
         end;
     end;
 
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Table", 'rm')]
     local procedure CreateDataBlob() Created: Boolean
+    begin
+        exit(CreateDataBlob(false));
+    end;
+
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Table", 'rm')]
+    local procedure CreateDataBlob(CheckOnly: Boolean) Created: Boolean
     var
+        ADLSESetup: Record "ADLSE Setup";
+        ADLSETable: Record "ADLSE Table";
         ADLSEUtil: Codeunit "ADLSE Util";
         ADLSEGen2Util: Codeunit "ADLSE Gen 2 Util";
         ADLSEExecution: Codeunit "ADLSE Execution";
         CustomDimension: Dictionary of [Text, Text];
         FileIdentifer: Guid;
+        FileIdentiferTxt: Text;
     begin
         if DataBlobPath <> '' then
             // Microsoft Fabric has a limit on the blob size. Create a new blob before reaching this limit
@@ -178,34 +197,55 @@ codeunit 82562 "ADLSE Communication"
                 BlobContentLength := 0;
             end;
 
-        FileIdentifer := CreateGuid();
-
-        DataBlobPath := StrSubstNo(DeltasFileCsvTok, EntityName, ADLSEUtil.ToText(FileIdentifer));
-        ADLSEGen2Util.CreateDataBlob(GetBaseUrl() + DataBlobPath, ADLSECredentials);
-        Created := true;
-        if EmitTelemetry then begin
-            Clear(CustomDimension);
-            CustomDimension.Add('Entity', EntityName);
-            CustomDimension.Add('DataBlobPath', DataBlobPath);
-            ADLSEExecution.Log('ADLSE-012', 'Created new blob to hold the data to be exported', Verbosity::Normal, CustomDimension);
+        if ADLSESetup.GetStorageType() <> ADLSESetup."Storage Type"::"Open Mirroring" then
+            FileIdentifer := CreateGuid()
+        else begin
+            //https://learn.microsoft.com/en-us/fabric/database/mirrored-database/open-mirroring-landing-zone-format#data-file-and-format-in-the-landing-zone
+            ADLSETable.Get(TableID);
+            if ADLSETable.ExportFileNumber = 0 then begin
+                ADLSETable.ExportFileNumber := 1;
+                ADLSETable.Modify(true);
+            end;
+            FileIdentiferTxt := Format(ADLSETable.ExportFileNumber);
+            FileIdentiferTxt := FileIdentiferTxt.PadLeft(20, '0');
         end;
+
+        if ADLSESetup.GetStorageType() = ADLSESetup."Storage Type"::"Open Mirroring" then
+            DataBlobPath := StrSubstNo(FileCsvTok, EntityName, FileIdentiferTxt)
+        else
+            DataBlobPath := StrSubstNo(DeltasFileCsvTok, EntityName, ADLSEUtil.ToText(FileIdentifer));
+
+        if not CheckOnly then
+            ADLSEGen2Util.CreateDataBlob(GetBaseUrl() + DataBlobPath, ADLSECredentials);
+        Created := true;
+        if not CheckOnly then
+            if EmitTelemetry then begin
+                Clear(CustomDimension);
+                CustomDimension.Add('Entity', EntityName);
+                CustomDimension.Add('DataBlobPath', DataBlobPath);
+                ADLSEExecution.Log('ADLSE-012', 'Created new blob to hold the data to be exported', Verbosity::Normal, CustomDimension);
+            end;
     end;
 
     [TryFunction]
-    procedure TryCollectAndSendRecord(RecordRef: RecordRef; RecordTimeStamp: BigInteger; var LastTimestampExported: BigInteger)
+    procedure TryCollectAndSendRecord(RecordRef: RecordRef; RecordTimeStamp: BigInteger; var LastTimestampExported: BigInteger; Deletes: Boolean)
     var
+        ADLSESetup: Record "ADLSE Setup";
         DataBlobCreated: Boolean;
     begin
         ClearLastError();
-        DataBlobCreated := CreateDataBlob();
-        LastTimestampExported := CollectAndSendRecord(RecordRef, RecordTimeStamp, DataBlobCreated);
+        ADLSESetup.GetSingleton();
+        DataBlobCreated := CreateDataBlob(ADLSESetup.GetStorageType() = ADLSESetup."Storage Type"::"Open Mirroring");
+        LastTimestampExported := CollectAndSendRecord(RecordRef, RecordTimeStamp, DataBlobCreated, Deletes);
     end;
 
-    local procedure CollectAndSendRecord(RecordRef: RecordRef; RecordTimeStamp: BigInteger; DataBlobCreated: Boolean) LastTimestampExported: BigInteger
+    local procedure CollectAndSendRecord(RecordRef: RecordRef; RecordTimeStamp: BigInteger; DataBlobCreated: Boolean; Deletes: Boolean) LastTimestampExported: BigInteger
     var
+        ADLSESetup: Record "ADLSE Setup";
         ADLSEUtil: Codeunit "ADLSE Util";
         RecordPayLoad: Text;
     begin
+        ADLSESetup.GetSingleton();
         if NumberOfFlushes = 50000 then // https://docs.microsoft.com/en-us/rest/api/storageservices/put-block#remarks
             Error(CannotAddedMoreBlocksErr);
 
@@ -213,18 +253,20 @@ codeunit 82562 "ADLSE Communication"
         if (DataBlobCreated) and (Payload.Length() <> 0) then
             Payload.Insert(1, ADLSEUtil.CreateCsvHeader(RecordRef, FieldIdList));
 
-        RecordPayLoad := ADLSEUtil.CreateCsvPayload(RecordRef, FieldIdList, Payload.Length() = 0);
+        RecordPayLoad := ADLSEUtil.CreateCsvPayload(RecordRef, FieldIdList, Payload.Length() = 0, Deletes);
         // check if payload exceeds the limit
         if Payload.Length() + StrLen(RecordPayLoad) + 2 > MaxPayloadSize() then begin // the 2 is to account for new line characters
             if Payload.Length() = 0 then
                 // the record alone exceeds the max payload size
                 Error(SingleRecordTooLargeErr);
             FlushPayload();
+            if ADLSESetup."Storage Type" = ADLSESetup."Storage Type"::"Open Mirroring" then
+                UpdateInProgressTimeStampOnTable(RecordRef.Number, RecordTimeStamp, Deletes);
         end;
         LastTimestampExported := LastFlushedTimeStamp;
 
         Payload.Append(RecordPayLoad);
-        LastRecordOnPayloadTimeStamp := RecordTimestamp;
+        LastRecordOnPayloadTimeStamp := RecordTimeStamp;
     end;
 
     [TryFunction]
@@ -235,7 +277,12 @@ codeunit 82562 "ADLSE Communication"
     end;
 
     local procedure Finish() LastTimestampExported: BigInteger
+    var
+        ADLSESetup: Record "ADLSE Setup";
     begin
+        if ADLSESetup.GetStorageType() = ADLSESetup."Storage Type"::"Open Mirroring" then
+            if DataBlobPath = '' then
+                CreateDataBlob();
         FlushPayload();
 
         LastTimestampExported := LastFlushedTimeStamp;
@@ -256,6 +303,7 @@ codeunit 82562 "ADLSE Communication"
     local procedure FlushPayload()
     var
         ADLSESetup: Record "ADLSE Setup";
+        ADLSETable: Record "ADLSE Table";
         ADLSEGen2Util: Codeunit "ADLSE Gen 2 Util";
         ADLSEExecution: Codeunit "ADLSE Execution";
         ADLSE: Codeunit ADLSE;
@@ -285,8 +333,12 @@ codeunit 82562 "ADLSE Communication"
                     if EmitTelemetry then
                         ADLSEExecution.Log('ADLSE-015', 'Block committed', Verbosity::Normal);
                 end;
-            ADLSESetup."Storage Type"::"Microsoft Fabric":
+            ADLSESetup."Storage Type"::"Microsoft Fabric", ADLSESetup."Storage Type"::"Open Mirroring":
                 begin
+                    if ADLSESetup.GetStorageType() = ADLSESetup."Storage Type"::"Open Mirroring" then begin
+                        DataBlobPath := '';
+                        CreateDataBlob();
+                    end;
                     ADLSEGen2Util.AddBlockToDataBlob(GetBaseUrl() + DataBlobPath, Payload.ToText(), BlobContentLength, ADLSECredentials);
                     BlobContentLength := ADLSEGen2Util.GetBlobContentLength(GetBaseUrl() + DataBlobPath, ADLSECredentials);
                 end;
@@ -296,6 +348,10 @@ codeunit 82562 "ADLSE Communication"
         Payload.Clear();
         LastRecordOnPayloadTimeStamp := 0;
         NumberOfFlushes += 1;
+
+        // increase export file number of the table when open mirroring is used
+        if (ADLSESetup.GetStorageType() = ADLSESetup."Storage Type"::"Open Mirroring") then
+            IncreaseExportFileNumber(TableID);
 
         ADLSE.OnTableExported(TableID, LastFlushedTimeStamp);
         if EmitTelemetry then begin
@@ -313,12 +369,21 @@ codeunit 82562 "ADLSE Communication"
         BlobPath: Text;
         BlobExists: Boolean;
     begin
+        ADLSESetup.ReadIsolation := IsolationLevel::UpdLock;
+        ADLSESetup.GetSingleton();
+
+        //TODO create open morroring specific code for this
         // update entity json
         if EntityJsonNeedsUpdate then begin
-            BlobPath := GetBaseUrl() + StrSubstNo(CorpusJsonPathTxt, StrSubstNo(EntityManifestNameTemplateTxt, EntityName));
+            if ADLSESetup."Storage Type" = ADLSESetup."Storage Type"::"Open Mirroring" then
+                BlobPath := ADLSESetup.LandingZone + StrSubstNo(CorpusJsonPathTxt, EntityName) + StrSubstNo(CorpusJsonPathTxt, '_metadata.json')
+            else
+                BlobPath := GetBaseUrl() + StrSubstNo(CorpusJsonPathTxt, StrSubstNo(EntityManifestNameTemplateTxt, EntityName));
             if ADLSESetup.GetStorageType() = ADLSESetup."Storage Type"::"Azure Data Lake" then
                 LeaseID := ADLSEGen2Util.AcquireLease(BlobPath, ADLSECredentials, BlobExists);
+
             ADLSEGen2Util.CreateOrUpdateJsonBlob(BlobPath, ADLSECredentials, LeaseID, EntityJson);
+
             if ADLSESetup.GetStorageType() = ADLSESetup."Storage Type"::"Azure Data Lake" then
                 ADLSEGen2Util.ReleaseBlob(BlobPath, ADLSECredentials, LeaseID);
         end;
@@ -327,9 +392,6 @@ codeunit 82562 "ADLSE Communication"
         if ManifestJsonsNeedsUpdate then begin
             // Expected that multiple sessions that export data from different tables will be competing for writing to 
             // manifest. Semaphore applied.
-            ADLSESetup.LockTable(true);
-            ADLSESetup.GetSingleton();
-
             UpdateManifest(GetBaseUrl() + StrSubstNo(CorpusJsonPathTxt, DataCdmManifestNameTxt), 'data', ADLSESetup.DataFormat);
 
             UpdateManifest(GetBaseUrl() + StrSubstNo(CorpusJsonPathTxt, DeltaCdmManifestNameTxt), 'deltas', "ADLSE CDM Format"::Csv);
@@ -360,6 +422,11 @@ codeunit 82562 "ADLSE Communication"
     end;
 
     procedure ResetTableExport(ltableId: Integer)
+    begin
+        ResetTableExport(ltableId, false);
+    end;
+
+    procedure ResetTableExport(ltableId: Integer; AllCompanies: Boolean)
     var
         ADLSESetup: Record "ADLSE Setup";
         ADLSEUtil: Codeunit "ADLSE Util";
@@ -368,13 +435,66 @@ codeunit 82562 "ADLSE Communication"
     begin
         ADLSESetup.GetSingleton();
         ADLSECredentials.Init();
+
+        if not AllCompanies then
+            if ADLSESetup."Export Company Database Tables" in ['', CompanyName()] then
+                if not ADLSEUtil.IsTablePerCompany(ltableId) then
+                    AllCompanies := true;
+
         case ADLSESetup."Storage Type" of
             "ADLSE Storage Type"::"Microsoft Fabric":
                 ADLSEGen2Util.CreateOrUpdateJsonBlob(GetBaseUrl() + StrSubstNo(ResetTableExportTxt, ADLSEUtil.GetDataLakeCompliantTableName(ltableId)), ADLSECredentials, '', Body);
             "ADLSE Storage Type"::"Azure Data Lake":
-                ADLSEGen2Util.RemoveDeltasFromDataLake(ADLSEUtil.GetDataLakeCompliantTableName(ltableId), ADLSECredentials);
+                ADLSEGen2Util.RemoveDeltasFromDataLake(ADLSEUtil.GetDataLakeCompliantTableName(ltableId), ADLSECredentials, AllCompanies);
+            "ADLSE Storage Type"::"Open Mirroring":
+                ADLSEGen2Util.DropTableFromOpenMirroring(ADLSEUtil.GetDataLakeCompliantTableName(ltableId), ADLSECredentials, AllCompanies);
         end;
     end;
 
+    local procedure UpdateInProgressTimeStampOnTable(TableIDToUpdate: Integer; Timestamp: BigInteger; Deletes: Boolean)
+    var
+        ADLSETable: Record "ADLSE Table";
+        ADLSEExecute: Codeunit "ADLSE Execute";
+    begin
+        ADLSETable.Get(TableIDToUpdate);
+        ADLSEExecute.UpdateInProgressTableTimestamp(ADLSETable, Timestamp, Deletes);
+    end;
+    local procedure IncreaseExportFileNumber(TableIdToUpdate: integer)
+#if not CLEAN27
+    var
+        ADLSETable: Record "ADLSE Table";
+    begin
+        // commit in current session causes RecRef.Next() to request data rom SQL ignoring subset retrieved from FindSet() (???) - this causes drastic performance issues when dealing with big tables; file number increase is pushed to another session for that purpose.
+        if not ADLSETable.CheckIfNeedToCommitExternally(TableIdToUpdate) then
+            IncreaseExportFileNumber_InCurrSession(TableIdToUpdate)
+        else
+            IncreaseExportFileNumber_InBkgSession(TableIdToUpdate);
+    end;
 
+    procedure IncreaseExportFileNumber_InCurrSession(TableIdToUpdate: integer)
+#endif
+    var
+        ADLSESetup: Record "ADLSE Setup";
+        ADLSETable: Record "ADLSE Table";
+    begin
+        if (ADLSESetup.GetStorageType() = ADLSESetup."Storage Type"::"Open Mirroring") then begin
+            ADLSETable.Get(TableIdToUpdate);
+            ADLSETable.ExportFileNumber := ADLSETable.ExportFileNumber + 1;
+            ADLSETable.Modify(true);
+            Commit();
+        end;
+    end;
+
+#if not CLEAN27
+    local procedure IncreaseExportFileNumber_InBkgSession(TableIdToUpdate: integer)
+    var
+        SessionInstruction: Record "Session Instruction";
+    begin
+        SessionInstruction."Object Type" := SessionInstruction."Object Type"::Codeunit;
+        SessionInstruction."Object ID" := Codeunit::"ADLSE Communication";
+        SessionInstruction.Method := "ADLSE Session Method"::"Handle Export File Number Increase";
+        SessionInstruction.Params := format(TableIdToUpdate);
+        SessionInstruction.ExecuteInNewSession();
+    end;
+#endif
 }

@@ -6,18 +6,19 @@ codeunit 82566 "ADLSE CDM Util" // Refer Common Data Model https://docs.microsof
 
     var
         BlankArray: JsonArray;
-        CompanyFieldNameLbl: Label '$Company';
-        DeliveredDateTimeFieldNameLbl: Label '$DeliveredDateTime';
+        CompanyFieldNameLbl: Label '$Company', Locked = true;
+        DeliveredDateTimeFieldNameLbl: Label '$DeliveredDateTime', Locked = true;
         ExistingFieldCannotBeRemovedErr: Label 'The field %1 in the entity %2 is already present in the data lake and cannot be removed.', Comment = '%1: field name, %2: entity name';
         FieldDataTypeCannotBeChangedErr: Label 'The data type for the field %1 in the entity %2 cannot be changed.', Comment = '%1: field name, %2: entity name';
         RepresentsTableTxt: Label 'Represents the table %1', Comment = '%1: table caption';
-        ManifestNameTxt: Label '%1-manifest', Comment = '%1: name of manifest';
-        EntityPathTok: Label '%1.cdm.json/%1', Comment = '%1: Entity';
+        ManifestNameTxt: Label '%1-manifest', Comment = '%1: name of manifest', Locked = true;
+        EntityPathTok: Label '%1.cdm.json/%1', Comment = '%1: Entity', Locked = true;
         UnequalAttributeCountErr: Label 'Unequal number of attributes';
         MismatchedValueInAttributeErr: Label 'The attribute value for %1 at index %2 is different. First: %3, Second: %4', Comment = '%1 = field, %2 = index, %3 = value of the first, %4 = value of the second';
 
     procedure CreateEntityContent(TableID: Integer; FieldIdList: List of [Integer]) Content: JsonObject
     var
+        ADLSESetup: Record "ADLSE Setup";
         ADLSEUtil: Codeunit "ADLSE Util";
         Definition: JsonObject;
         Definitions: JsonArray;
@@ -25,6 +26,7 @@ codeunit 82566 "ADLSE CDM Util" // Refer Common Data Model https://docs.microsof
         Imports: JsonArray;
         EntityName: Text;
     begin
+        ADLSESetup.GetSingleton();
         Content.Add('jsonSchemaSemanticVersion', '1.0.0');
         Import.Add('corpusPath', 'cdm:/foundations.cdm.json');
         Imports.Add(Import);
@@ -32,11 +34,59 @@ codeunit 82566 "ADLSE CDM Util" // Refer Common Data Model https://docs.microsof
         EntityName := ADLSEUtil.GetDataLakeCompliantTableName(TableID);
         Definition.Add('entityName', EntityName);
         Definition.Add('exhibitsTraits', BlankArray);
-        Definition.Add('displayName', ADLSEUtil.GetTableName(TableID));
+        if ADLSESetup."Use Table Captions" then
+            Definition.Add('displayName', ADLSEUtil.GetTableCaption(TableID))
+        else
+            Definition.Add('displayName', ADLSEUtil.GetTableName(TableID));
         Definition.Add('description', StrSubstNo(RepresentsTableTxt, ADLSEUtil.GetTableName(TableID)));
         Definition.Add('hasAttributes', CreateAttributes(TableID, FieldIdList));
         Definitions.Add(Definition);
         Content.Add('definitions', Definitions);
+    end;
+
+    procedure CreateEntityContent(TableID: Integer) Content: JsonObject
+    var
+        ADLSESetup: Record "ADLSE Setup";
+        ADLSEUtil: Codeunit "ADLSE Util";
+        ADLSEExecute: Codeunit "ADLSE Execute";
+        RecordRef: RecordRef;
+        SystemIdFieldRef: FieldRef;
+        FieldRef: FieldRef;
+        FieldIdList: List of [Integer];
+        FieldId: Integer;
+        Imports: JsonArray;
+        Columns: JsonArray;
+        Column: JsonObject;
+        SchemaDefinition: JsonObject;
+    begin
+        //Must be systemId and $Company because of the deleted record table
+        RecordRef.Open(TableID);
+        FieldIdList := ADLSEExecute.CreateFieldListForTable(TableID);
+
+        SystemIdFieldRef := RecordRef.Field(2000000000);
+        Imports.Add(ADLSEUtil.GetDataLakeCompliantFieldName(SystemIdFieldRef));
+        if ADLSEUtil.IsTablePerCompany(TableID) then
+            Imports.Add(GetCompanyFieldName());
+        Content.Add('keyColumns', Imports);
+        Content.Add('fileDetectionStrategy', 'LastUpdateTimeFileDetection');
+
+        ADLSESetup.GetSingleton();
+        foreach FieldId in FieldIdList do begin
+            FieldRef := RecordRef.Field(FieldId);
+            Clear(Column);
+            Column.Add('Name', ADLSEUtil.GetDataLakeCompliantFieldName(FieldRef));
+            if ADLSESetup."Storage Type" = ADLSESetup."Storage Type"::"Open Mirroring" then begin
+                Column.Add('DataType', GetOpenMirrorDataFormat(FieldRef.Type));
+                if (FieldRef.Number <> RecordRef.SystemIdNo()) then
+                    Column.Add('IsNullable', true);
+            end else
+                Column.Add('DataType', GetFabricDataFormat(FieldRef.Type));
+            Columns.Add(Column);
+        end;
+
+        SchemaDefinition.Add('Columns', Columns);
+        Content.Add('SchemaDefinition', SchemaDefinition);
+        Content.Add('fileFormat', 'csv');
     end;
 
     procedure UpdateDefaultManifestContent(ExistingContent: JsonObject; TableID: Integer; Folder: Text; ADLSECdmFormat: Enum "ADLSE CDM Format") Content: JsonObject
@@ -111,7 +161,7 @@ codeunit 82566 "ADLSE CDM Util" // Refer Common Data Model https://docs.microsof
         Token.Add(NameValue);
     end;
 
-    local procedure CreateAttributes(TableID: Integer; FieldIdList: List of [Integer]) Result: JsonArray;
+    local procedure CreateAttributes(TableID: Integer; FieldIdList: List of [Integer]) Result: JsonArray
     var
         ADLSESetup: Record "ADLSE Setup";
         ADLSEUtil: Codeunit "ADLSE Util";
@@ -129,9 +179,11 @@ codeunit 82566 "ADLSE CDM Util" // Refer Common Data Model https://docs.microsof
             FieldLength := FieldRef.Length;
             if FieldRef.Type = FieldRef.Type::Option then
                 FieldLength := EnumValueMaxLength();
+            if FieldRef.Type = FieldRef.Type::Decimal then
+                FieldLength := 15; // 15 is the default max number of digits. FieldRef.Length is giving the wrong number back for decimal
             Result.Add(
                 CreateAttributeJson(
-                    ADLSEUtil.GetDataLakeCompliantFieldName(FieldRef.Name, FieldRef.Number),
+                    ADLSEUtil.GetDataLakeCompliantFieldName(FieldRef),
                     DataFormat,
                     FieldRef.Name,
                     AppliedTraits,
@@ -140,15 +192,15 @@ codeunit 82566 "ADLSE CDM Util" // Refer Common Data Model https://docs.microsof
                 ));
         end;
         ADLSESetup.GetSingleton();
-        if ADLSESetup."Delivered DateTime" then begin
-            GetCDMAttributeDetails(FieldType::DateTime, DataFormat, AppliedTraits);
-            Result.Add(
-                CreateAttributeJson(GetDeliveredDateTimeFieldName(), DataFormat, GetDeliveredDateTimeFieldName(), AppliedTraits, FieldRef.Length, false));
-        end;
         if ADLSEUtil.IsTablePerCompany(TableID) then begin
             GetCDMAttributeDetails(FieldType::Text, DataFormat, AppliedTraits);
             Result.Add(
                 CreateAttributeJson(GetCompanyFieldName(), DataFormat, GetCompanyFieldName(), AppliedTraits, GetCompanyFieldNameLength(), false));
+        end;
+        if ADLSESetup."Delivered DateTime" then begin
+            GetCDMAttributeDetails(FieldType::DateTime, DataFormat, AppliedTraits);
+            Result.Add(
+                CreateAttributeJson(GetDeliveredDateTimeFieldName(), DataFormat, GetDeliveredDateTimeFieldName(), AppliedTraits, FieldRef.Length, false));
         end;
     end;
 
@@ -174,7 +226,7 @@ codeunit 82566 "ADLSE CDM Util" // Refer Common Data Model https://docs.microsof
         FieldTable: Record Field;
     begin
         if FieldTable.Get(TableId, FieldId) then
-            exit(fieldTable.IsPartOfPrimaryKey);
+            exit(FieldTable.IsPartOfPrimaryKey);
     end;
 
     local procedure CreateAttributeJson(Name: Text; DataFormat: Text; DisplayName: Text; AppliedTraits: JsonArray; MaximumLength: Integer; IsPrimaryKeyFieldParameter: Boolean) Attribute: JsonObject
@@ -337,6 +389,92 @@ codeunit 82566 "ADLSE CDM Util" // Refer Common Data Model https://docs.microsof
     begin
         exit('String');
     end;
+
+    local procedure GetFabricDataFormat(FieldType: FieldType): Text
+    var
+        ADLSESetup: Record "ADLSE Setup";
+    begin
+        case FieldType of
+            FieldType::BigInteger:
+                exit('Int');
+            FieldType::Date:
+                exit('date');
+            FieldType::DateFormula:
+                exit(GetCDMDataFormat_String());
+            FieldType::DateTime:
+                exit('DateTimeFormat');
+            FieldType::Decimal:
+                exit('DecimalFormat');
+            FieldType::Duration:
+                exit('timedelta');
+            FieldType::Integer:
+                exit('Int');
+            FieldType::Option:
+                begin
+                    ADLSESetup.GetSingleton();
+                    if ADLSESetup."Export Enum as Integer" then
+                        exit('Int')
+                    else
+                        exit(GetCDMDataFormat_String());
+                end;
+            FieldType::Time:
+                exit(GetCDMDataFormat_String());
+            FieldType::Boolean:
+                exit('Boolean');
+            FieldType::Code:
+                exit(GetCDMDataFormat_String());
+            FieldType::Guid:
+                exit(GetCDMDataFormat_String());
+            FieldType::Text:
+                exit(GetCDMDataFormat_String());
+            else
+                exit(GetCDMDataFormat_String()); // default case
+        end;
+    end;
+
+
+    local procedure GetOpenMirrorDataFormat(FieldType: FieldType): Text
+    var
+        ADLSESetup: Record "ADLSE Setup";
+    begin
+        case FieldType of
+            FieldType::BigInteger:
+                exit('Int64');
+            FieldType::Date:
+                exit('IDate');
+            FieldType::DateFormula:
+                exit(GetCDMDataFormat_String());
+            FieldType::DateTime:
+                exit('DateTime');
+            FieldType::Decimal:
+                exit('Double');
+            FieldType::Duration:
+                exit(GetCDMDataFormat_String());
+            FieldType::Integer:
+                exit('Int32');
+            FieldType::Option:
+                begin
+                    ADLSESetup.GetSingleton();
+                    if ADLSESetup."Export Enum as Integer" then
+                        exit('Int32')
+                    else
+                        exit(GetCDMDataFormat_String());
+                end;
+            FieldType::Time:
+                exit('ITime');
+            FieldType::Boolean:
+                exit('Boolean');
+            FieldType::Code:
+                exit(GetCDMDataFormat_String());
+            FieldType::Guid:
+                exit(GetCDMDataFormat_String());
+            FieldType::Text:
+                exit(GetCDMDataFormat_String());
+            else
+                exit(GetCDMDataFormat_String()); // default case
+        end;
+    end;
+
 
     local procedure CompareAttributeField(Attribute1: JsonToken; Attribute2: JsonToken; FieldName: Text; Index: Integer)
     var

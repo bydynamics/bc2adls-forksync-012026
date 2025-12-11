@@ -19,57 +19,59 @@ page 82562 "ADLSE Setup Fields"
             {
                 field("FieldCaption"; Rec.FieldCaption)
                 {
-                    ApplicationArea = All;
-                    Tooltip = 'Specifies the name of the field to be exported';
+                    StyleExpr = StyleExprAsText;
                 }
 
                 field("Field ID"; Rec."Field ID")
                 {
-                    ApplicationArea = All;
                     Caption = 'Number';
-                    Tooltip = 'Specifies the ID of the field to be exported';
+                    StyleExpr = StyleExprAsText;
                     Visible = false;
                 }
 
                 field(Enabled; Rec.Enabled)
                 {
-                    ApplicationArea = All;
-                    Tooltip = 'Specifies if the field will be exported';
+                    StyleExpr = StyleExprAsText;
                 }
-
-                field(ADLSFieldName; ADLSFieldName)
+                field(IsPartOfPrimaryKey; IsPartOfPrimaryKey)
                 {
                     ApplicationArea = All;
+                    Caption = 'Part of Primary Key';
+                    Editable = false;
+                    StyleExpr = StyleExprAsText;
+                    ToolTip = 'Specifies if the the field is part of the primary key';
+                }
+                field(ADLSFieldName; ADLSFieldName)
+                {
                     Caption = 'Attribute name';
-                    Tooltip = 'Specifies the name of the field for this entity in the data lake.';
+                    StyleExpr = StyleExprAsText;
+                    ToolTip = 'Specifies the name of the field for this entity in the data lake.';
                     Editable = false;
                 }
 
                 field("Field Class"; FieldClassName)
                 {
-                    ApplicationArea = All;
                     Caption = 'Class';
                     OptionCaption = 'Normal,FlowField,FlowFilter';
-                    Tooltip = 'Specifies the field class';
+                    StyleExpr = StyleExprAsText;
+                    ToolTip = 'Specifies the field class.';
                     Editable = false;
                     Visible = false;
                 }
 
                 field("Field Type"; FieldTypeName)
                 {
-                    ApplicationArea = All;
                     Caption = 'Type';
-                    Tooltip = 'Specifies the field type';
+                    ToolTip = 'Specifies the field type.';
                     Editable = false;
                     Visible = false;
                 }
 
                 field("Obsolete State"; FieldObsoleteState)
                 {
-                    ApplicationArea = All;
                     Caption = 'Obsolete State';
                     OptionCaption = 'No,Pending,Removed';
-                    Tooltip = 'Specifies the Obsolete State of the field';
+                    ToolTip = 'Specifies the Obsolete State of the field.';
                     Editable = false;
                     Visible = false;
                 }
@@ -92,7 +94,7 @@ page 82562 "ADLSE Setup Fields"
                 var
                     SomeFieldsCouldNotBeEnabled: Boolean;
                 begin
-                    Rec.SetFilter(Enabled, '<>%1', true);
+                    Rec.SetRange(Enabled, false);
                     if Rec.FindSet() then
                         repeat
                             if Rec.CanFieldBeEnabled() then begin
@@ -114,15 +116,34 @@ page 82562 "ADLSE Setup Fields"
         Field: Record Field;
         ADLSEUtil: Codeunit "ADLSE Util";
     begin
-        Field.Get(Rec."Table ID", Rec."Field ID");
-        ADLSFieldName := ADLSEUtil.GetDataLakeCompliantFieldName(Field.FieldName, Field."No.");
-        FieldClassName := Field.Class;
-        FieldTypeName := Field."Type Name";
-        FieldObsoleteState := Field.ObsoleteState;
+        if not Field.Get(Rec."Table ID", Rec."Field ID") then begin
+            ADLSFieldName := ADLSEUtil.GetDataLakeCompliantFieldName(Rec."Table ID", Rec."Field ID");
+            Clear(FieldClassName);
+            Clear(FieldTypeName);
+            FieldObsoleteState := Field.ObsoleteState::Removed;
+            Clear(IsPartOfPrimaryKey);
+        end
+        else begin
+            ADLSFieldName := ADLSEUtil.GetDataLakeCompliantFieldName(Field.TableNo, Field."No.");
+            FieldClassName := Field.Class;
+            FieldTypeName := Field."Type Name";
+            FieldObsoleteState := Field.ObsoleteState;
+            IsPartOfPrimaryKey := Field.IsPartOfPrimaryKey;
+        end;
+
+        if IsPartOfPrimaryKey then
+            StyleExprAsText := 'StrongAccent'
+        else
+            StyleExprAsText := 'Standard';
+
+        if FieldObsoleteState <> Field.ObsoleteState::No then
+            StyleExprAsText := 'Attention';
     end;
 
     var
+        IsPartOfPrimaryKey: Boolean;
         ADLSFieldName: Text;
+        StyleExprAsText: Text;
         FieldClassName: Option Normal,FlowField,FlowFilter;
         FieldTypeName: Text[30];
         SomeFieldsCouldNotBeEnabledMsg: Label 'One or more fields could not be enabled.';

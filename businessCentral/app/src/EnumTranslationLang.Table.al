@@ -1,8 +1,12 @@
+#pragma warning disable LC0015
 table 82568 "ADLSE Enum Translation Lang"
+#pragma warning restore
 {
     DataClassification = ToBeClassified;
     Caption = 'ADLSE Enum Translation Language';
     Access = Internal;
+    LookupPageId = "ADLSE Enum Translations Lang";
+    DrillDownPageId = "ADLSE Enum Translations Lang";
 
     fields
     {
@@ -51,6 +55,7 @@ table 82568 "ADLSE Enum Translation Lang"
         }
     }
 
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Enum Translation Lang", 'i')]
     procedure InsertEnumLanguage(LanguageCode: Code[10]; TableId: Integer; FieldNo: Integer; FieldName: Text[30]; EnumValueOrdinal: Integer; EnumValueName: Text)
     var
         ADLSEUtil: Codeunit "ADLSE Util";
@@ -60,9 +65,9 @@ table 82568 "ADLSE Enum Translation Lang"
         Rec."Table Id" := TableId;
         Rec."Compliant Table Name" := CopyStr(ADLSEUtil.GetDataLakeCompliantTableName(TableId), 1, MaxStrLen((Rec."Compliant Table Name")));
         Rec."Field Id" := FieldNo;
-        Rec."Compliant Field Name" := CopyStr(ADLSEUtil.GetDataLakeCompliantFieldName(FieldName, FieldNo), 1, MaxStrLen((Rec."Compliant Field Name")));
+        Rec."Compliant Field Name" := CopyStr(ADLSEUtil.GetDataLakeCompliantFieldName(TableId, FieldNo), 1, MaxStrLen((Rec."Compliant Field Name")));
         Rec."Enum Value Id" := EnumValueOrdinal;
         Rec."Enum Value Caption" := CopyStr(EnumValueName, 1, MaxStrLen(Rec."Enum Value Caption"));
-        Rec.Insert();
+        Rec.Insert(true);
     end;
 }

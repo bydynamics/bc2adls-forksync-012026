@@ -11,16 +11,27 @@ codeunit 82569 "ADLSE Execution"
         EmitTelemetry: Boolean;
         ExportStartedTxt: Label 'Data export started for %1 out of %2 tables. Please refresh this page to see the latest export state for the tables. Only those tables that either have had changes since the last export or failed to export last time have been included. The tables for which the exports could not be started have been queued up for later.', Comment = '%1 = number of tables to start the export for. %2 = total number of tables enabled for export.';
         SuccessfulStopMsg: Label 'The export process was stopped successfully.';
-        JobCategoryCodeTxt: Label 'ADLSE';
-        JobCategoryDescriptionTxt: Label 'Export to Azure Data Lake';
-        JobScheduledTxt: Label 'The job has been scheduled. Please go to the Job Queue Entries page to locate it and make further changes.';
         ClearSchemaExportedOnMsg: Label 'The schema export date has been cleared.';
 
 
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Table", 'r')]
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Field", 'r')]
     internal procedure StartExport()
     var
-        ADLSESetupRec: Record "ADLSE Setup";
         ADLSETable: Record "ADLSE Table";
+    begin
+#if not CLEAN27
+        // Exports marked for Commit Externally should be processed via dedicated job queue due to SaaS background session operations limits.
+        ADLSETable.SetFilter("Process Type", '<>%1', ADLSETable."Process Type"::"Commit Externally");
+#endif
+        StartExport(ADLSETable);
+    end;
+
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Table", 'r')]
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Field", 'r')]
+    internal procedure StartExport(var AdlseTable: Record "ADLSE Table")
+    var
+        ADLSESetupRec: Record "ADLSE Setup";
         ADLSEField: Record "ADLSE Field";
         ADLSECurrentSession: Record "ADLSE Current Session";
         ADLSESetup: Codeunit "ADLSE Setup";
@@ -55,8 +66,6 @@ codeunit 82569 "ADLSE Execution"
         Message(ExportStartedTxt, Started, Counter);
         if EmitTelemetry then
             Log('ADLSE-001', StrSubstNo(ExportStartedTxt, Started, Counter), Verbosity::Normal);
-
-        ADLSEExternalEvents.OnAllExportIsFinished(ADLSESetupRec);
     end;
 
     internal procedure StopExport()
@@ -78,6 +87,8 @@ codeunit 82569 "ADLSE Execution"
             Log('ADLSE-019', 'Stopped export sessions', Verbosity::Normal);
     end;
 
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Table", 'r')]
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Setup", 'm')]
     internal procedure SchemaExport()
     var
         ADLSESetup: Record "ADLSE Setup";
@@ -94,31 +105,40 @@ codeunit 82569 "ADLSE Execution"
 
         ADLSETable.Reset();
         ADLSETable.SetRange(Enabled, true);
-        if ADLSETable.FindSet(false) then
-            if GuiAllowed then
-                ProgressWindowDialog.Open(Progress1Msg);
+        if not ADLSETable.FindSet(false) then
+            exit;
+
+        if GuiAllowed() then
+            ProgressWindowDialog.Open(Progress1Msg);
+
         repeat
-            if GuiAllowed then begin
+            if GuiAllowed() then begin
                 AllObjWithCaption.SetRange("Object Type", AllObjWithCaption."Object Type"::Table);
                 AllObjWithCaption.SetRange("Object ID", ADLSETable."Table ID");
                 if AllObjWithCaption.FindFirst() then
-                    if GuiAllowed then
+                    if GuiAllowed() then
                         ProgressWindowDialog.Update(1, AllObjWithCaption."Object Caption");
             end;
 
             ADLSEExecute.ExportSchema(ADLSETable."Table ID");
         until ADLSETable.Next() = 0;
 
-        if GuiAllowed then
+        if GuiAllowed() then
             ProgressWindowDialog.Close();
 
         ADLSESetup.GetSingleton();
         ADLSESetup."Schema Exported On" := CurrentDateTime();
-        ADLSESetup.Modify();
+        ADLSESetup.Modify(true);
 
         ADLSEExternalEvents.OnExportSchema(ADLSESetup);
     end;
 
+    internal procedure ClearSchemaExportedOn(ErrInfo: ErrorInfo)
+    begin
+        ClearSchemaExportedOn();
+    end;
+
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Setup", 'm')]
     internal procedure ClearSchemaExportedOn()
     var
         ADLSESetup: Record "ADLSE Setup";
@@ -126,8 +146,8 @@ codeunit 82569 "ADLSE Execution"
     begin
         ADLSESetup.GetSingleton();
         ADLSESetup."Schema Exported On" := 0DT;
-        ADLSESetup.Modify();
-        if GuiAllowed then
+        ADLSESetup.Modify(true);
+        if GuiAllowed() then
             Message(ClearSchemaExportedOnMsg);
 
         ADLSEExternalEvents.OnClearSchemaExportedOn(ADLSESetup);
@@ -136,33 +156,31 @@ codeunit 82569 "ADLSE Execution"
     internal procedure ScheduleExport()
     var
         JobQueueEntry: Record "Job Queue Entry";
-        ScheduleAJob: Page "Schedule a Job";
+        ADLSEScheduleTaskAssignment: Report "ADLSE Schedule Task Assignment";
+        SavedData: Text;
+        xmldata: Text;
         Handled: Boolean;
     begin
         OnBeforeScheduleExport(Handled);
         if Handled then
             exit;
 
-        CreateJobQueueEntry(JobQueueEntry);
-        ScheduleAJob.SetJob(JobQueueEntry);
-        Commit(); // above changes go into the DB before RunModal
-        if ScheduleAJob.RunModal() = Action::OK then
-            Message(JobScheduledTxt);
-    end;
+        JobQueueEntry.SetFilter("User ID", UserId());
+        JobQueueEntry.SetRange("Object Type to Run", JobQueueEntry."Object Type to Run"::Report);
+        JobQueueEntry.SetRange("Object ID to Run", Report::"ADLSE Schedule Task Assignment");
+        JobQueueEntry.SetCurrentKey(SystemCreatedAt);
+        JobQueueEntry.SetAscending(SystemCreatedAt, false);
 
-    local procedure CreateJobQueueEntry(var JobQueueEntry: Record "Job Queue Entry")
-    var
-        JobQueueCategory: Record "Job Queue Category";
-    begin
-        JobQueueCategory.InsertRec(JobCategoryCodeTxt, JobCategoryDescriptionTxt);
-        if JobQueueEntry.FindJobQueueEntry(JobQueueEntry."Object Type to Run"::Codeunit, Codeunit::"ADLSE Execution") then
-            exit;
-        JobQueueEntry.Init();
-        JobQueueEntry.Status := JobQueueEntry.Status::"On Hold";
-        JobQueueEntry.Description := JobQueueCategory.Description;
-        JobQueueEntry."Object Type to Run" := JobQueueEntry."Object Type to Run"::Codeunit;
-        JobQueueEntry."Object ID to Run" := CODEUNIT::"ADLSE Execution";
-        JobQueueEntry."Earliest Start Date/Time" := CurrentDateTime(); // now
+        if JobQueueEntry.FindFirst() then
+            SavedData := JobQueueEntry.GetReportParameters();
+
+        xmldata := ADLSEScheduleTaskAssignment.RunRequestPage(SavedData);
+
+        if xmldata <> '' then begin
+            ADLSEScheduleTaskAssignment.CreateJobQueueEntry(JobQueueEntry);
+            JobQueueEntry.SetReportParameters(xmldata);
+            JobQueueEntry.Modify();
+        end;
     end;
 
     internal procedure Log(EventId: Text; Message: Text; Verbosity: Verbosity)
@@ -179,7 +197,7 @@ codeunit 82569 "ADLSE Execution"
 
     [InherentPermissions(PermissionObjectType::Table, Database::"ADLSE Table Last Timestamp", 'X')]
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Table Last Timestamp", 'R')]
-    [EventSubscriber(ObjectType::Codeunit, Codeunit::GlobalTriggerManagement, 'OnAfterGetDatabaseTableTriggerSetup', '', true, true)]
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::GlobalTriggerManagement, OnAfterGetDatabaseTableTriggerSetup, '', false, false)]
     local procedure GetDatabaseTableTriggerSetup(TableId: Integer; var OnDatabaseInsert: Boolean; var OnDatabaseModify: Boolean; var OnDatabaseDelete: Boolean; var OnDatabaseRename: Boolean)
     var
         ADLSETableLastTimestamp: Record "ADLSE Table Last Timestamp";
@@ -193,21 +211,29 @@ codeunit 82569 "ADLSE Execution"
     end;
 
     [InherentPermissions(PermissionObjectType::Table, Database::"ADLSE Table Last Timestamp", 'X')]
+    [InherentPermissions(PermissionObjectType::Table, Database::"ADLSE Deleted Record", 'X')]
+    [InherentPermissions(PermissionObjectType::Table, Database::"Deleted Tables Not to Sync", 'X')]
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Table Last Timestamp", 'R')]
     [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Deleted Record", 'RI')]
-    [EventSubscriber(ObjectType::Codeunit, Codeunit::GlobalTriggerManagement, 'OnAfterOnDatabaseDelete', '', true, true)]
+    [InherentPermissions(PermissionObjectType::TableData, Database::"Deleted Tables Not to Sync", 'r')]
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::GlobalTriggerManagement, OnAfterOnDatabaseDelete, '', false, false)]
     local procedure OnAfterOnDatabaseDelete(RecRef: RecordRef)
     var
         ADLSETableLastTimestamp: Record "ADLSE Table Last Timestamp";
         ADLSEDeletedRecord: Record "ADLSE Deleted Record";
+        DeletedTablesNottoSync: Record "Deleted Tables Not to Sync";
     begin
-        // exit function for tables that you do not wish to sync deletes for
-        // you should also consider not registering for deletes for the table in the function GetDatabaseTableTriggerSetup above.
-        // if RecRef.Number = Database::"G/L Entry" then
-        //     exit;
+        if RecRef.Number() = Database::"ADLSE Deleted Record" then
+            exit;
+
+        if RecRef.CurrentCompany() <> CompanyName() then //workarround for records which are deleted usings changecompany
+            ADLSETableLastTimestamp.ChangeCompany(RecRef.CurrentCompany());
+
+        if DeletedTablesNottoSync.Get(RecRef.Number()) then
+            exit;
 
         // check if table is to be tracked.
-        if not ADLSETableLastTimestamp.ExistsUpdatedLastTimestamp(RecRef.Number) then
+        if not ADLSETableLastTimestamp.ExistsUpdatedLastTimestamp(RecRef.Number()) then
             exit;
 
         ADLSEDeletedRecord.TrackDeletedRecord(RecRef);

@@ -1,17 +1,17 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License. See LICENSE in the project root for license information.
-page 82568 "ADLSE Setup API v11"
+page 97001 "ADLSE Setup API v12"
 {
     PageType = API;
     APIPublisher = 'bc2adlsTeamMicrosoft';
     APIGroup = 'bc2adls';
-    APIVersion = 'v1.1';
+    APIVersion = 'v1.2';
     EntityName = 'adlseSetup';
     EntitySetName = 'adlseSetup';
     SourceTable = "ADLSE Setup";
     InsertAllowed = false;
     DeleteAllowed = false;
-    ModifyAllowed = false;
+    ModifyAllowed = true;
     ODataKeyFields = SystemId;
 
     layout
@@ -20,7 +20,10 @@ page 82568 "ADLSE Setup API v11"
         {
             repeater(GroupName)
             {
-                field(primaryKey; Rec."Primary Key") { }
+                field(primaryKey; Rec."Primary Key")
+                {
+                    Editable = false;
+                }
                 field(container; Rec.Container) { }
                 field(emitTelemetry; Rec."Emit telemetry") { }
                 field(dataFormat; Rec.DataFormat) { }
@@ -29,12 +32,19 @@ page 82568 "ADLSE Setup API v11"
                 {
                     Editable = false;
                 }
+                field(skipTimestampSorting; Rec."Skip Timestamp Sorting On Recs") { }
                 field(exportEnumasInteger; Rec."Export Enum as Integer") { }
-                field(systemId; Rec.SystemId)
+                field(id; Rec.SystemId)
                 {
                     Editable = false;
                 }
+#pragma warning disable LC0016
                 field(systemRowVersion; Rec.SystemRowVersion)
+                {
+                    Editable = false;
+                }
+#pragma warning restore
+                field(lastModifiedDateTime; Rec.SystemModifiedAt)
                 {
                     Editable = false;
                 }
@@ -90,7 +100,7 @@ page 82568 "ADLSE Setup API v11"
     local procedure SetActionResponse(var ActionContext: WebServiceActionContext; AdlsId: Guid)
     var
     begin
-        SetActionResponse(ActionContext, Page::"ADLSE Setup API v11", AdlsId);
+        SetActionResponse(ActionContext, Page::"ADLSE Setup API v12", AdlsId);
     end;
 
     local procedure SetActionResponse(var ActionContext: WebServiceActionContext; PageId: Integer; DocumentId: Guid)

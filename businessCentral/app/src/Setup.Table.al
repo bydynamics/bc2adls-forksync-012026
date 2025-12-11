@@ -1,8 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License. See LICENSE in the project root for license information.
-table 82560 "ADLSE Setup"
+#pragma warning disable LC0015
+table 80039 "ADLSE Setup"
+#pragma warning restore
 {
     Access = Internal;
+    Caption = 'ADLSE Setup';
     DataClassification = CustomerContent;
     DataPerCompany = false;
     DataCaptionFields = Container;
@@ -102,6 +105,16 @@ table 82560 "ADLSE Setup"
         field(25; "Storage Type"; Enum "ADLSE Storage Type")
         {
             Caption = 'Storage type';
+
+            trigger OnValidate()
+            var
+                OpenMirroringPreviewLbl: label 'Microsoft Fabric - Open Mirroring connection in bc2adls is still in preview. Please use it with caution.';
+            begin
+                if Rec."Storage Type" = Rec."Storage Type"::"Open Mirroring" then begin
+                    Rec."Delete Table" := true;
+                    Message(OpenMirroringPreviewLbl);
+                end;
+            end;
         }
 
         field(30; Workspace; Text[100])
@@ -132,11 +145,15 @@ table 82560 "ADLSE Setup"
                         Error(LakehouseIncorrectFormatErr);
             end;
         }
+        field(32; LandingZone; Text[250])
+        {
+            Caption = 'Landing Zone';
+        }
         field(35; "Schema Exported On"; DateTime)
         {
             Caption = 'Schema exported on';
         }
-        field(40; "Translations"; Text[250])
+        field(40; Translations; Text[2048])
         {
             Caption = 'Translations';
         }
@@ -151,7 +168,7 @@ table 82560 "ADLSE Setup"
         }
         field(50; "Delete Table"; Boolean)
         {
-            Caption = 'Delete table';
+            Caption = 'Delete Table';
         }
         field(55; "Maximum Retries"; Integer)
         {
@@ -178,8 +195,29 @@ table 82560 "ADLSE Setup"
         {
             Caption = 'Export Company Database Tables';
             TableRelation = Company.Name;
-        }
 
+
+        }
+        field(70; "Delayed Export"; Integer)
+        {
+            Caption = 'Delayed Export';
+            InitValue = 0;
+        }
+        field(75; "Use Field Captions"; Boolean)
+        {
+            Caption = 'Use Field Captions';
+            InitValue = false;
+        }
+        field(80; "Use IDs for Duplicates Only"; Boolean)
+        {
+            Caption = 'IDs for Duplicates Only';
+            InitValue = false;
+        }
+        field(95; "Use Table Captions"; Boolean)
+        {
+            Caption = 'Use Table Captions';
+            InitValue = false;
+        }
     }
 
     keys
@@ -228,6 +266,7 @@ table 82560 "ADLSE Setup"
         Insert();
     end;
 
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Setup", 'r')]
     procedure Exists(): Boolean
     begin
         exit(Rec.Get(GetPrimaryKeyValue()));
@@ -245,10 +284,20 @@ table 82560 "ADLSE Setup"
     end;
 
     procedure SchemaExported()
+    var
+        FixitErrorInfo: ErrorInfo;
+        ClearSchemaExportDateLbl: Label 'Clear schema export date';
     begin
         Rec.GetSingleton();
-        if Rec."Schema Exported On" <> 0DT then
-            Error(ErrorInfo.Create(SchemaAlreadyExportedErr, true));
+        if Rec."Schema Exported On" <> 0DT then begin
+            FixitErrorInfo := ErrorInfo.Create(SchemaAlreadyExportedErr, true);
+            FixitErrorInfo.AddAction(
+                ClearSchemaExportDateLbl,
+                Codeunit::"ADLSE Execution",
+                'ClearSchemaExportedOn'
+            );
+            Error(FixitErrorInfo);
+        end;
     end;
 
     procedure CheckSchemaExported()

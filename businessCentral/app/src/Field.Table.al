@@ -1,10 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License. See LICENSE in the project root for license information.
+#pragma warning disable LC0015
 table 82562 "ADLSE Field"
+#pragma warning restore
 {
     Access = Internal;
+    Caption = 'ADLSE Field';
     DataClassification = CustomerContent;
     DataPerCompany = false;
+    Permissions = tabledata "ADLSE Table" = r;
 
     fields
     {
@@ -37,6 +41,9 @@ table 82562 "ADLSE Field"
             begin
                 if Rec.Enabled then
                     Rec.CheckFieldToBeEnabled();
+
+                if not Rec.Enabled then
+                    Rec.CheckNotPrimaryKeyField();
 
                 ADLSEExternalEvents.OnEnableFieldChanged(Rec);
             end;
@@ -86,6 +93,7 @@ table 82562 "ADLSE Field"
     var
         TableDoesNotExistErr: Label 'Table with ID %1 has not been set to be exported.', Comment = '%1 is the table ID';
 
+    [InherentPermissions(PermissionObjectType::TableData, Database::"ADLSE Field", 'ri')]
     procedure InsertForTable(ADLSETable: Record "ADLSE Table")
     var
         Field: Record Field;
@@ -93,6 +101,7 @@ table 82562 "ADLSE Field"
     begin
         Field.SetRange(TableNo, ADLSETable."Table ID");
         Field.SetFilter("No.", '<%1', 2000000000); // no system fields
+        Field.SetFilter(ObsoleteState, '<>%1', Field.ObsoleteState::Removed);
 
         if Field.FindSet() then
             repeat
@@ -100,7 +109,7 @@ table 82562 "ADLSE Field"
                     Rec."Table ID" := Field.TableNo;
                     Rec."Field ID" := Field."No.";
                     Rec.Enabled := false;
-                    Rec.Insert();
+                    Rec.Insert(true);
                 end;
             until Field.Next() = 0;
     end;
@@ -114,6 +123,17 @@ table 82562 "ADLSE Field"
         Field.Get(Rec."Table ID", Rec."Field ID");
         ADLSEUtil.CheckFieldTypeForExport(Field);
         ADLSESetup.CheckFieldCanBeExported(Field);
+    end;
+
+    procedure CheckNotPrimaryKeyField()
+    var
+        Field: Record Field;
+        FieldCannotBeDisabledErr: Label 'Table field is part of the Primary Key, Field cannot be disabled.';
+    begin
+        if Rec.Enabled then exit;
+        if not Field.Get(Rec."Table ID", Rec."Field ID") then exit;
+        if Field.IsPartOfPrimaryKey then
+            error(FieldCannotBeDisabledErr)
     end;
 
     [TryFunction]
